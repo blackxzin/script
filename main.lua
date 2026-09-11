@@ -15,6 +15,17 @@ if getgenv and getgenv()._EliteAutomationLoaded then
 end
 if getgenv then getgenv()._EliteAutomationLoaded = true end
 
+-- Bloqueia requests do executor que causam 404 e deteccao
+if hookfunction and game.HttpGet then
+	local originalHttpGet = game.HttpGet
+	hookfunction(game.HttpGet, function(self, url, ...)
+		if type(url) == "string" and url:find("userInReservations") then
+			return "{}"
+		end
+		return originalHttpGet(self, url, ...)
+	end)
+end
+
 local executor = "Unknown"
 if identifyexecutor then executor = identifyexecutor()
 elseif getexecutorname then executor = getexecutorname()
