@@ -1,6 +1,21 @@
-# ⚡ Elite Automation Framework v2.0 - Grand Piece Online (GPO)
+# ⚡ Elite Automation Framework v2.1 - Grand Piece Online (GPO)
 
 Framework modular de automação avançada para **Grand Piece Online (GPO)** no Roblox. Totalmente compatível e testado para execução no **Xeno (PC)** e **Delta (Mobile & PC)**, além de Codex, Fluxus, Hydrogen e Arceus X.
+
+**🆕 Novidades v2.1:**
+- 🎨 **Sistema de Temas** - Dark Elite, Neon Cyber, Minimal com glassmorphism
+- ⚡ **Performance Manager** - Connection pooling, memory cleanup automático
+- 🤖 **Movimento Humanizado** - Perlin noise, delays naturais, anti-detecção avançada
+- 📜 **Auto-Quest System** - Farm automático de quests com priorização inteligente
+- 🌍 **Teleport Manager** - Viagem rápida entre ilhas com 30+ localizações
+- 🔄 **Farm Rotation** - Rotação de bosses por eficiência (XP/min)
+- 🛡️ **Perfect Block** - Bloqueio perfeito com 150ms timing window
+- 🔥 **Combo System** - 5 builds de combo (ThreeSwordStyle, BlackLeg, Electro, DragonClaw, Fishman)
+- 👁️ **ESP System** - Highlight de bosses, frutas e players
+- 💊 **Auto-Heal** - Cura automática com 8 itens priorizados
+- 🤖 **Anti-AFK** - Sistema anti-kick com ações randomizadas
+- 📊 **Auto-Stats** - Distribuição automática de pontos em 5 builds
+- 🛡️ **Server-Safe Movement** - Validação server-side com suspicion scoring
 
 ---
 
@@ -79,23 +94,168 @@ Você também pode abrir o arquivo [`main.lua`](main.lua), copiar todo o código
 
 ---
 
+### 📜 7. Auto-Quest System (Novo v2.1)
+- **Seleção Inteligente**: Escolhe automaticamente a melhor quest baseado no nível do jogador e recompensas.
+- **Farm Automático**: Aceita quest, localiza inimigos, elimina e completa automaticamente.
+- **Progresso em Tempo Real**: Contador de kills exibido na UI (ex: 5/10).
+- **Suporte a 10+ Quests**: First Sea e Second Sea incluídas.
+
+---
+
+### 🌍 8. Teleport Manager (Novo v2.1)
+- **30+ Ilhas Catalogadas**: Todas as ilhas principais de First Sea e Second Sea.
+- **Aliases Inteligentes**: Digite "sky" para ir até "Land of the Sky", "desert" para Sandora, etc.
+- **Teleporte Seguro**: Usa SmartFlight para bypass 100% eficaz.
+- **Histórico**: Últimas 5 viagens registradas.
+- **Teleporte para Ilha Mais Próxima**: Comando rápido para voltar à civilização.
+
+---
+
+### 🎨 9. Sistema de Temas (Novo v2.1)
+- **3 Temas Pré-configurados**:
+  - **Dark Elite** (Padrão): Roxo/azul escuro com glassmorphism
+  - **Neon Cyber**: Roxo/rosa vibrante estilo cyberpunk
+  - **Minimal**: Cinza minimalista sem blur
+- **Glassmorphism Real**: Blur backdrop, gradientes, efeitos de brilho
+- **Troca Dinâmica**: Muda tema sem reiniciar o script
+
+---
+
+### ⚡ 10. Performance & Anti-Detecção (Novo v2.1)
+- **Connection Pooling**: Gerenciamento automático de eventos para evitar memory leaks
+- **Tween Pooling**: Cancela tweens órfãos automaticamente
+- **Auto-Cleanup**: Coleta de lixo inteligente a cada 30s
+- **Movimento Humanizado**: 
+  - Perlin noise 1D para velocidade orgânica
+  - Delays baseados em distribuição normal (Box-Muller)
+  - Micro-desvios em trajetórias (não caminha em linha reta perfeita)
+  - Input timing variável (150-300ms de reação humana)
+- **Jitter de Posição**: Adiciona aleatoriedade sub-stud para evitar padrões robóticos
+
+---
+
+### 🔄 11. Farm Rotation System (Novo v2.1)
+- **Rotação Inteligente por Eficiência**: Calcula XP/minuto de cada boss considerando:
+  - Tempo de kill estimado
+  - Tempo de respawn
+  - Recompensas (XP + valor de drops ponderado pela drop rate)
+- **8 Bosses Catalogados**: Bandit Boss, Lucid, Axe Hand Logan, Gravito, Enel, Neptune, Ryuma, Law
+- **Rota Dinâmica**: Reconstrói rota a cada ciclo baseado em:
+  - Bosses disponíveis (respawn completo)
+  - Nível do jogador (ignora bosses 50+ níveis acima)
+  - Prioridade + Eficiência combinados
+- **Top 5 Route**: Seleciona os 5 bosses mais eficientes para rotação otimizada
+
+---
+
+### 🛡️ 12. Perfect Block & Combo System (Novo v2.1)
+- **Perfect Block (150ms window)**: 
+  - Detecção de animações de ataque inimigo
+  - Ativação precisa do bloqueio no timing exato
+  - Reduz dano em 90% e nega stun
+- **Block Break**: Usa skill de quebra (tecla C) automaticamente contra inimigos em guard
+- **Combo Chains**: 5 builds com rotações otimizadas:
+  - **ThreeSwordStyle**: M1×3 → Z → M1×2 → X → M1×4 → C
+  - **BlackLeg**: M1×3 → Z → M1×3 → X → M1×2 → C
+  - **Electro**: Z → M1×4 → X → M1×3 → C
+  - **DragonClaw**: M1×2 → Z → M1×3 → X → M1×4 → C
+  - **Fishman**: M1×3 → Z → M1×2 → X → M1×3 → C
+- **Cooldown Tracking**: Aguarda cooldown real de cada skill antes de reuso
+
+---
+
+### 👁️ 13. ESP System (Novo v2.1)
+- **Highlight System**: Destaca entidades através de paredes
+- **Billboard Labels**: Mostra nome e distância em tempo real
+- **Categorias com Cores**:
+  - Bosses: Vermelho
+  - Frutas: Roxo
+  - Players: Azul
+  - NPCs: Verde
+- **Filtros**: Ativa/desativa por categoria
+- **Performance**: Auto-cleanup de objetos destruídos
+
+---
+
+### 💊 14. Auto-Heal System (Novo v2.1)
+- **8 Itens Catalogados** (prioridade decrescente):
+  1. Dough Donut (instant 100%)
+  2. Bento Box (80% + regen)
+  3. Meat (70%)
+  4. Fishman Karate Gi (50% + buff)
+  5. Cake (50%)
+  6. Apple (30%)
+  7. Pear (25%)
+  8. Banana (20%)
+- **Dual Thresholds**: 50% (normal), 25% (emergência)
+- **Cooldown**: 2s entre heals para evitar spam
+- **Verificação de Estoque**: Só tenta usar itens disponíveis no inventário
+
+---
+
+### 🤖 15. Anti-AFK System (Novo v2.1)
+- **4 Ações Randomizadas**:
+  - Movimento de câmera (random yaw/pitch)
+  - Pulo (jump input)
+  - Deslocamento curto (2-5 studs)
+  - Teclas WASD aleatórias
+- **Intervalos Variáveis**: 1.5-2.5 minutos entre ações
+- **Detecção de Kick Warning**: Monitora PlayerGui para alertas de AFK
+- **Action Randomizer**: Nunca repete a mesma ação duas vezes seguidas
+
+---
+
+### 📊 16. Auto-Stats System (Novo v2.1)
+- **5 Builds Pré-configurados**:
+  - **SwordMain**: 50% Strength, 25% Defense, 20% Stamina, 5% Fruit
+  - **DevilFruitMain**: 55% Fruit, 20% Stamina, 15% Defense, 10% Strength
+  - **Hybrid**: 35% Strength, 30% Fruit, 20% Stamina, 15% Defense
+  - **Tank**: 40% Defense, 30% Stamina, 20% Strength, 10% Fruit
+  - **GlassCannon**: 45% Strength, 40% Fruit, 10% Stamina, 5% Defense
+- **Distribuição Automática**: Aloca pontos por porcentagem ao subir de nível
+- **Verificação de Pontos**: Só distribui se houver pontos disponíveis
+- **Seleção Dinâmica**: Troca de build via UI sem reiniciar
+
+---
+
+### 🛡️ 17. Server-Safe Movement (Novo v2.1)
+- **Suspicion Scoring (0-100)**:
+  - Analisa padrões de movimento
+  - Detecta velocidades anômalas
+  - Identifica teleports suspeitos
+  - Monitora altitude (max 500 studs)
+- **Safe Limits**:
+  - MaxTweenSpeed: 48 studs/s
+  - MaxTeleportDist: 100 studs
+  - MinTweenTime: 0.8s
+  - MaxAltitude: 500 studs
+- **Movement History**: Rastreia últimos 10 movimentos
+- **Validation**: Rejeita movimentos que violem limites server-side
+- **3 Safety Levels**:
+  - Extreme: 75% velocidade
+  - High: 85% velocidade
+  - Medium: 100% velocidade
+- **Segmented Travel**: Divide viagens longas em segmentos < 100 studs
+
+---
+
 ## 📁 Estrutura do Repositório
 
 ```text
-├── main.lua                    # Bundle único compilado para executores (Xeno / Delta)
+├── main.lua                    # Bundle único compilado (32 módulos, ~250KB)
 ├── loader.lua                  # Script de carregamento remoto via HttpGet
 ├── default.project.json        # Configuração para Rojo / Roblox Studio
 ├── tools/
-│   └── bundle.py               # Script utilitário de empacotamento do bundle
+│   └── bundle.py               # Script utilitário de empacotamento
 └── src/
     ├── ReplicatedStorage/
     │   └── EliteAutomation/
-    │       ├── Core/           # Logger, StateMachine, TaskManager, PriorityManager
+    │       ├── Core/           # Logger, StateMachine, TaskManager, PerformanceManager, PriorityManager
     │       ├── Config/         # Settings (Bosses, velocidades, intervalos)
-    │       ├── Movement/       # SmartFlight (Tween bypass, anti-mar, anti-queda)
-    │       ├── Combat/         # CombatController (Buso, Ken, Grip, Stamina)
-    │       ├── Systems/        # LawFactoryFarm, MerchantTracker, BossManager, FruitTracker...
-    │       └── UI/             # MainUI, Components, TabManager, Notifications
+    │       ├── Movement/       # SmartFlight, ServerSafeMovement, HumanMovement
+    │       ├── Combat/         # CombatController, AdvancedCombat, ComboSystem, TargetSelector
+    │       ├── Systems/        # 13 sistemas (Boss, Quest, Teleport, Merchant, Law, Fruit, Item, FarmRotation, AutoStats, ESP, AutoHeal, AntiAFK)
+    │       └── UI/             # MainUI, Components, TabManager, Theme, Notifications
     └── StarterPlayer/
         └── StarterPlayerScripts/
             └── EliteAutomation.client.lua

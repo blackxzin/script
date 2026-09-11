@@ -13,6 +13,7 @@ local Root          = ReplicatedStorage:WaitForChild("EliteAutomation")
 local StateMachine  = require(Root.Core.StateMachine)
 local TargetSelector = require(Root.Combat.TargetSelector)
 local Logger        = require(Root.Core.Logger)
+local HumanMovement = require(Root.Movement.HumanMovement)
 
 local CombatController = {}
 CombatController.__index = CombatController
@@ -38,6 +39,7 @@ function CombatController.new(settings)
 	self.AutoBusoHaki   = self.Settings.AutoBusoHaki ~= false    -- Ativa Busoshoku Haki ('J')
 	self.AutoKenHaki    = self.Settings.AutoKenHaki or false     -- Ativa Kenbunshoku Haki ('K')
 	self.AutoGrip       = self.Settings.AutoGrip ~= false        -- Executa alvos nocauteados ('B')
+	self.UseCombo       = self.Settings.UseCombo or false        -- Usa sistema de combos
 	self._lastHakiCheck = 0
 	self._lastGripCheck = 0
 
@@ -48,7 +50,7 @@ function CombatController.new(settings)
 	self._running       = false
 	self._thread        = nil
 	self._lastAttack    = 0
-	self._nextInterval  = jitter(self.AttackMin, self.AttackMax)
+	self._nextInterval  = HumanMovement.HumanDelay(self.AttackMin, (self.AttackMax - self.AttackMin) / 2)
 
 	-- Callbacks externos (podem ser sobrescritos)
 	self.OnTargetFound  = nil   -- function(model)
@@ -217,16 +219,17 @@ function CombatController:_performAttack()
 	-- Em Grand Piece Online (GPO), ataques corpo-a-corpo e armas usam M1 (Mouse1).
 	local vim = game:GetService("VirtualInputManager")
 	if vim then
-		vim:SendMouseButtonEvent(0, 0, 0, true,  game, 1)
-		task.wait(0.04)
-		vim:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+		-- Usa movimento humanizado para clique
+		HumanMovement.HumanClick(function(pressed)
+			vim:SendMouseButtonEvent(0, 0, 0, pressed, game, 1)
+		end)
 	end
 
 	-- Executa grip se o alvo estiver caído
 	self:_checkGrip()
 
 	self._lastAttack   = os.clock()
-	self._nextInterval = jitter(self.AttackMin, self.AttackMax)
+	self._nextInterval = HumanMovement.HumanDelay(self.AttackMin, (self.AttackMax - self.AttackMin) / 2)
 	Logger.Debug("Attack fired | next in", string.format("%.2fs", self._nextInterval))
 end
 
