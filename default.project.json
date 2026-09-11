@@ -1,0 +1,18 @@
+{
+  "name": "EliteAutomation",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "EliteAutomation": {
+        "$path": "src/ReplicatedStorage/EliteAutomation"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts"
+      }
+    }
+  }
+}
