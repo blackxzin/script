@@ -19,18 +19,44 @@ local function randBetween(a, b)
 	return a + math.random() * (b - a)
 end
 
+-- ponytail: sem pathfinding; linha reta chunkada. Upgrade: waypoints desviando de ilhas.
+local SEG_LEN = 200 -- studs por tween; tween gigante = flag teleport + disconnect
+local SEG_TIME_MAX = 8 -- s por segmento; evita tween preso
+
+local function aliveChar(self)
+	local char = self.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not char or not char.Parent or not root or not root.Parent then return nil end
+	if hum and hum.Health <= 0 then return nil end
+	return root
+end
+
 -- ─── Utilitário: aguarda tween terminar de forma segura ──────
-local function awaitTween(tween)
+local function awaitTween(tween, timeout)
 	if not tween then return end
+	timeout = timeout or SEG_TIME_MAX
 	local done = false
 	local conn
 	conn = tween.Completed:Connect(function()
 		done = true
 	end)
+	local t0 = os.clock()
 	while not done and tween.PlaybackState == Enum.PlaybackState.Playing do
+		if os.clock() - t0 > timeout then
+			pcall(function() tween:Cancel() end)
+			break
+		end
 		task.wait()
 	end
 	if conn then conn:Disconnect() end
+end
+
+local function lookCFrame(pos, dir)
+	if dir and dir.Magnitude > 1 then
+		return CFrame.new(pos, pos + dir.Unit)
+	end
+	return CFrame.new(pos) -- sem Unit de vetor zero (NaN = fling pro void)
 end
 
 function SmartFlight.new(character, settings)
@@ -51,6 +77,7 @@ function SmartFlight.new(character, settings)
 	self._safeLoop     = nil
 	self._noclipConn   = nil
 	self._currentTween = nil
+	self._flightId     = 0 -- token: novo FlyTo/Stop cancela o anterior (voo sobreposto = fling)
 
 	return self
 end
@@ -75,17 +102,9 @@ function SmartFlight:_startNoclip()
 	local root = self:_getRoot()
 	local hum  = self:_getHumanoid()
 
-	-- Cria BodyVelocity de estabilização de física se não existir.
-	-- O BodyVelocity zera a inércia perante a física do Roblox e o anticheat do GPO,
-	-- permitindo que o TweenService mova o CFrame sem disparar o detector de queda/teleporte.
-	if root and not root:FindFirstChild("FlightStabilizer") then
-		local bv = Instance.new("BodyVelocity")
-		bv.Name = "FlightStabilizer"
-		bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-		bv.Velocity = Vector3.zero
-		bv.Parent = root
-	end
-
+	-- NOTA: sem BodyVelocity/BodyMovers no character. GPO escaneia
+	-- BodyMovers estranhos no RootPart e kicka. Tween de CFrame +
+	-- noclip + velocidade zerada já estabilizam sem assinatura.
 	-- Desabilita temporariamente o controle do Humanoid para evitar atrito com o tween
 	if hum and hum.Health > 0 then
 		hum.PlatformStand = true
@@ -109,11 +128,9 @@ function SmartFlight:_startNoclip()
 			r.AssemblyAngularVelocity = Vector3.zero
 		end
 
-		-- Spoof de estado de física para evitar detecção de noclip no GPO
-		local h = self:_getHumanoid()
-		if h and h.Health > 0 then
-			h:ChangeState(Enum.HumanoidStateType.Physics)
-		end
+		-- NOTA: sem ChangeState por frame. ChangeState(Physics) a cada
+		-- Stepped é assinatura conhecida de noclip e causa kick no GPO.
+		-- PlatformStand + velocidade zerada já estabilizam o tween.
 	end)
 end
 
@@ -123,11 +140,8 @@ function SmartFlight:_stopNoclip()
 		self._noclipConn = nil
 	end
 
-	-- Remove o estabilizador de física
 	local root = self:_getRoot()
 	if root then
-		local bv = root:FindFirstChild("FlightStabilizer")
-		if bv then bv:Destroy() end
 		root.CanCollide = true
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.AssemblyAngularVelocity = Vector3.zero
@@ -143,14 +157,18 @@ end
 
 -- ─── Calcula altitude segura sobre um ponto do mundo ─────────
 function SmartFlight:_safeY(targetPos)
-	local ray = Ray.new(
-		Vector3.new(targetPos.X, 5000, targetPos.Z),
-		Vector3.new(0, -6000, 0)
-	)
-	local hit, hitPos = workspace:FindPartOnRayWithIgnoreList(
-		ray, { self.Character }
-	)
-	local groundY = hit and hitPos.Y or self.SeaLevel
+	local groundY = self.SeaLevel
+	pcall(function()
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { self.Character }
+		local res = workspace:Raycast(
+			Vector3.new(targetPos.X, 5000, targetPos.Z),
+			Vector3.new(0, -6000, 0),
+			params
+		)
+		if res then groundY = res.Position.Y end
+	end)
 
 	-- Proteção rigorosa contra mar no GPO (águas profundas causam dano letal a usuários de fruta)
 	-- Se groundY estiver próximo ao nível do mar (<= SeaLevel + 2), força SeaFloorOffset seguro (mínimo 35 studs)
@@ -174,7 +192,7 @@ end
 
 -- ─── Executa um segmento de Tween de CFrame ───────────────────
 function SmartFlight:_tweenTo(targetCFrame, speed)
-	local root = self:_getRoot()
+	local root = aliveChar(self)
 	if not root then return false end
 
 	local dist = (targetCFrame.Position - root.Position).Magnitude
@@ -184,25 +202,26 @@ function SmartFlight:_tweenTo(targetCFrame, speed)
 	self:_requestStream(targetCFrame.Position)
 
 	local duration = dist / math.max(speed, 5)
+	duration = math.min(duration, SEG_TIME_MAX)
 
-	local info = TweenInfo.new(
-		duration,
-		self.TweenStyle,
-		self.TweenDir
-	)
-
-	local tween = TweenService:Create(root, info, { CFrame = targetCFrame })
+	local tween
+	pcall(function()
+		tween = TweenService:Create(root,
+			TweenInfo.new(duration, self.TweenStyle, self.TweenDir),
+			{ CFrame = targetCFrame })
+	end)
+	if not tween then return false end
 	self._currentTween = tween
 	tween:Play()
 
-	awaitTween(tween)
+	awaitTween(tween, math.max(duration + 2, 3))
 
 	-- Limpa referência
 	if self._currentTween == tween then
 		self._currentTween = nil
 	end
 
-	return true
+	return aliveChar(self) ~= nil
 end
 
 -- ─── Voa até uma posição com trajetória otimizada ────────────
@@ -210,18 +229,35 @@ end
 	targetPos : Vector3 do destino
 	Usa estratégia de voo em 3 fases:
 	  1. Subida até a altitude segura de cruzeiro (evita bater em montanhas/ilhas)
-	  2. Cruzeiro horizontal até as coordenadas X, Z
+	  2. Cruzeiro horizontal em segmentos curtos até as coordenadas X, Z
 	  3. Descida suave até o alvo final
 ]]
 function SmartFlight:FlyTo(targetPos)
-	local root = self:_getRoot()
-	if not root then return false end
+	if typeof(targetPos) ~= "Vector3" then return false end
+	-- NaN/Inf = CFrame inválido = disconnect na hora. Barato checar.
+	if targetPos.X ~= targetPos.X or math.abs(targetPos.X) > 1e5
+		or targetPos.Y ~= targetPos.Y or math.abs(targetPos.Y) > 1e5
+		or targetPos.Z ~= targetPos.Z or math.abs(targetPos.Z) > 1e5 then
+		return false
+	end
 
-	-- Cancela qualquer tween anterior
+	self._flightId += 1
+	local myFlight = self._flightId
 	if self._currentTween then
-		self._currentTween:Cancel()
+		pcall(function() self._currentTween:Cancel() end)
 		self._currentTween = nil
 	end
+
+	-- Tween sentado (barco/cadeira) = weld fight = disconnect. Levanta antes.
+	local hum = self:_getHumanoid()
+	if hum and hum.Seated then
+		pcall(function() hum.Sit = false end)
+		task.wait(0.3)
+	end
+
+	local root = aliveChar(self)
+	if not root then return false end
+	if myFlight ~= self._flightId then return false end
 
 	self._flying = true
 	self:_startNoclip()
@@ -232,59 +268,66 @@ function SmartFlight:FlyTo(targetPos)
 	local startPos    = root.Position
 	local targetSafeY = self:_safeY(targetPos)
 	local cruiseY     = math.max(startPos.Y, targetSafeY, self.SeaLevel + self.SeaFloor)
+	local alive = function()
+		return myFlight == self._flightId and aliveChar(self) ~= nil
+	end
 
-	local horizontalDist = (Vector3.new(targetPos.X, 0, targetPos.Z)
-		- Vector3.new(startPos.X, 0, startPos.Z)).Magnitude
+	-- Fase 1: eleva até cruzeiro
+	if startPos.Y < (cruiseY - 5) then
+		if not alive() then self:_cleanup(); return false end
+		self:_tweenTo(CFrame.new(Vector3.new(startPos.X, cruiseY, startPos.Z)), speed * 1.2)
+	end
 
-	-- Se o percurso for longo (> 80 studs), usa subida -> cruzeiro -> descida
-	if horizontalDist > 80 then
-		-- Fase 1: Eleva até a altitude de cruzeiro se estiver mais baixo
-		if startPos.Y < (cruiseY - 5) then
-			local liftCFrame = CFrame.new(Vector3.new(startPos.X, cruiseY, startPos.Z))
-			self:_tweenTo(liftCFrame, speed * 1.2)
+	-- Fase 2: cruzeiro chunkado (tween gigante = flag teleport + disconnect)
+	if alive() then
+		local flatDir = Vector3.new(targetPos.X - startPos.X, 0, targetPos.Z - startPos.Z)
+		local hDist = flatDir.Magnitude
+		local steps = math.max(1, math.ceil(hDist / SEG_LEN))
+		for i = 1, steps do
+			if not alive() then self:_cleanup(); return false end
+			local t = i / steps
+			local wp = Vector3.new(
+				startPos.X + (targetPos.X - startPos.X) * t,
+				cruiseY,
+				startPos.Z + (targetPos.Z - startPos.Z) * t
+			)
+			self:_requestStream(wp)
+			self:_tweenTo(lookCFrame(wp, flatDir), speed)
 		end
+	end
 
-		if not self._flying then self:_cleanup(); return false end
-
-		-- Fase 2: Cruzeiro horizontal direto até a vertical do destino
-		local cruiseCFrame = CFrame.new(
-			Vector3.new(targetPos.X, cruiseY, targetPos.Z),
-			Vector3.new(targetPos.X, cruiseY, targetPos.Z) + (targetPos - startPos).Unit
-		)
-		self:_tweenTo(cruiseCFrame, speed)
-
-		if not self._flying then self:_cleanup(); return false end
-
-		-- Fase 3: Descida suave até a posição alvo
+	-- Fase 3: descida suave
+	if alive() then
 		local finalY = math.max(targetPos.Y, self.SeaLevel + 5)
-		local finalCFrame = CFrame.new(Vector3.new(targetPos.X, finalY, targetPos.Z))
-		self:_tweenTo(finalCFrame, speed * 1.1)
-
-	else
-		-- Percurso curto: vai diretamente ao alvo
-		local finalY = math.max(targetPos.Y, self.SeaLevel + 5)
-		local targetCFrame = CFrame.new(Vector3.new(targetPos.X, finalY, targetPos.Z))
-		self:_tweenTo(targetCFrame, speed)
+		self:_tweenTo(CFrame.new(Vector3.new(targetPos.X, finalY, targetPos.Z)), speed * 1.1)
 	end
 
 	self:_cleanup()
-	return true
+	return alive()
 end
 
 -- ─── Voa até um alvo com margem de parada ───────────────────
 function SmartFlight:FlyToTarget(targetPart, stopRadius)
 	stopRadius = stopRadius or 10
-	local root = self:_getRoot()
-	if not root then return false end
+	if not aliveChar(self) then return false end
 
-	while targetPart and targetPart.Parent and self._flying do
-		local dist = (targetPart.Position - root.Position).Magnitude
-		if dist <= stopRadius then
-			break
+	self._flightId += 1
+	local myFlight = self._flightId
+	self._flying = true
+	self:_startNoclip()
+
+	local t0 = os.clock()
+	local lastTween = 0
+	while myFlight == self._flightId do
+		local root = aliveChar(self)
+		if not root or not targetPart or not targetPart.Parent then break end
+		if (targetPart.Position - root.Position).Magnitude <= stopRadius then break end
+		if os.clock() - t0 > 120 then break end -- alvo fugindo; sem loop infinito
+		if os.clock() - lastTween >= 1.0 then -- tween spam = flag teleport
+			lastTween = os.clock()
+			self:_tweenTo(lookCFrame(targetPart.Position, targetPart.Position - root.Position), self.SpeedBase)
 		end
-		local result = self:FlyTo(targetPart.Position)
-		if not result then break end
-		task.wait(0.05)
+		task.wait(0.2)
 	end
 
 	self:_cleanup()
@@ -293,15 +336,13 @@ end
 
 -- ─── Hover estático em uma posição ──────────────────────────
 function SmartFlight:HoverAt(position, durationSecs)
-	local root = self:_getRoot()
+	local root = aliveChar(self)
 	if not root then return end
 
 	local safeY  = self:_safeY(position)
 	local hoverPos = Vector3.new(position.X, safeY, position.Z)
 
-	root.CFrame = CFrame.new(hoverPos)
-	root.AssemblyLinearVelocity = Vector3.zero
-	root.AssemblyAngularVelocity = Vector3.zero
+	self:FlyTo(hoverPos) -- sem CFrame direto: teleport = disconnect
 	task.wait(durationSecs or 0)
 end
 
@@ -310,13 +351,14 @@ function SmartFlight:_cleanup()
 	self._flying = false
 	self:_stopNoclip()
 	if self._currentTween then
-		self._currentTween:Cancel()
+		pcall(function() self._currentTween:Cancel() end)
 		self._currentTween = nil
 	end
 end
 
 -- ─── Para qualquer movimento em curso ───────────────────────
 function SmartFlight:Stop()
+	self._flightId += 1 -- cancela loop de voo em andamento
 	self:_cleanup()
 end
 

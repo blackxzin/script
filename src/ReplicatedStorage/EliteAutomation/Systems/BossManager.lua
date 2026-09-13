@@ -16,8 +16,24 @@ local Logger     = require(Root.Core.Logger)
 local BossManager = {}
 BossManager.__index = BossManager
 
+-- ─── Índice único por scan: 1x GetDescendants em vez de 30x FindFirstChild(true) ─
+local function buildModelIndex()
+	local index = {}
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Model") then
+			local key = obj.Name:lower()
+			if not index[key] then
+				if obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("Humanoid") then
+					index[key] = obj
+				end
+			end
+		end
+	end
+	return index
+end
+
 -- ─── Utilitário: encontra modelo no workspace por nome ou aliases ─
-local function findBossModel(config)
+local function findBossModel(config, index)
 	if not config then return nil end
 
 	-- Lista de nomes a testar
@@ -29,20 +45,34 @@ local function findBossModel(config)
 	end
 
 	for _, name in ipairs(names) do
-		local m = workspace:FindFirstChild(name, true) or workspace:FindFirstChild(name)
+		local m
+		if index then
+			m = index[name:lower()]
+		else
+			m = workspace:FindFirstChild(name, true) or workspace:FindFirstChild(name)
+		end
 		if m and (m:FindFirstChild("HumanoidRootPart") or m:FindFirstChildOfClass("Humanoid")) then
 			return m
 		end
 	end
 
-	-- Busca parcial/case-insensitive em descendants se for Kraken ou Sea Beast
-	local lowerName = config.Name:lower()
-	for _, obj in ipairs(workspace:GetChildren()) do
-		if obj:IsA("Model") then
-			local objLower = obj.Name:lower()
-			if objLower:find(lowerName, 1, true) then
-				if obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("Humanoid") then
-					return obj
+	-- Busca parcial só com índice (sem índice: 1x GetChildren, sem scan recursivo extra)
+	if index then
+		local lowerName = config.Name:lower()
+		for key, obj in pairs(index) do
+			if key:find(lowerName, 1, true) then
+				return obj
+			end
+		end
+	else
+		local lowerName = config.Name:lower()
+		for _, obj in ipairs(workspace:GetChildren()) do
+			if obj:IsA("Model") then
+				local objLower = obj.Name:lower()
+				if objLower:find(lowerName, 1, true) then
+					if obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("Humanoid") then
+						return obj
+					end
 				end
 			end
 		end
@@ -80,10 +110,10 @@ end
 --   CATEGORIA 1 — RAID / DUNGEON BOSSES (Moria, Ba'al, Impel Down)
 -- ══════════════════════════════════════════════════════════════
 
-function BossManager:_handleRaidBoss(config)
+function BossManager:_handleRaidBoss(config, index)
 	Logger.Info("BossManager → Verificando Raid Boss:", config.Name)
 
-	local bossModel = findBossModel(config)
+	local bossModel = findBossModel(config, index)
 	if not bossModel then
 		-- Se houver localização definida e não estiver engajado, vai até lá
 		if config.Location and self.SmartFlight and not self._currentBoss then
@@ -141,7 +171,7 @@ function BossManager:_handleRaidBoss(config)
 
 	self._currentBoss = nil
 	if self.Combat then
-		self.Combat:Stop()
+		self.Combat:ClearTarget()
 	end
 
 	Logger.Success("Raid Boss", config.Name, "finalizado!")
@@ -151,7 +181,7 @@ end
 --   CATEGORIA 2 — BOSSES DE TEMPO E ILHAS (Ryuma, Borj, Gravito, Enel, Neptune)
 -- ══════════════════════════════════════════════════════════════
 
-function BossManager:_handleTimedBoss(config)
+function BossManager:_handleTimedBoss(config, index)
 	local name     = config.Name
 	local cooldown = config.CooldownSecs or 1800
 	local lastSeen = self._timedTimestamps[name] or 0
@@ -170,7 +200,7 @@ function BossManager:_handleTimedBoss(config)
 	end
 
 	Logger.Info("BossManager → Verificando World Boss:", name)
-	local bossModel = findBossModel(config)
+	local bossModel = findBossModel(config, index)
 
 	if not bossModel then
 		return
@@ -227,8 +257,8 @@ end
 --   CATEGORIA 3 — SEA EVENTS & BOSSES DE MAR (Kraken, Sea Beast, Ghost Ship, Megalodon)
 -- ══════════════════════════════════════════════════════════════
 
-function BossManager:_handleLocationBoss(config)
-	local bossModel = findBossModel(config)
+function BossManager:_handleLocationBoss(config, index)
+	local bossModel = findBossModel(config, index)
 	if not bossModel then return end
 
 	local bossRoot = bossModel:FindFirstChild("HumanoidRootPart")
@@ -278,12 +308,14 @@ function BossManager:_handleLocationBoss(config)
 					if root then
 						local seaLevel = config.SeaLevel or 0
 						if root.Position.Y < (seaLevel + config.SafeAltitude) then
-							root.CFrame = CFrame.new(
-								root.Position.X,
-								seaLevel + config.SafeAltitude + 5,
-								root.Position.Z
-							)
 							Logger.Warn("Anti-afogamento GPO ativado! Mantendo sobre o mar.")
+							if self.SmartFlight then
+								self.SmartFlight:FlyTo(Vector3.new(
+									root.Position.X,
+									seaLevel + config.SafeAltitude + 5,
+									root.Position.Z
+								))
+							end
 						end
 					end
 				end
@@ -327,12 +359,13 @@ function BossManager:_loop()
 
 	while self._running do
 		local ok, err = pcall(function()
+			local index = buildModelIndex()
 
 			-- ── 1. Sea Events / Location Bosses (Prioridade máxima em GPO)
 			if cfg.LocationBosses then
 				for _, bossCfg in pairs(cfg.LocationBosses) do
 					if not self._running then break end
-					self:_handleLocationBoss(bossCfg)
+					self:_handleLocationBoss(bossCfg, index)
 				end
 			end
 
@@ -340,7 +373,7 @@ function BossManager:_loop()
 			if cfg.TimedBosses then
 				for _, bossCfg in pairs(cfg.TimedBosses) do
 					if not self._running then break end
-					self:_handleTimedBoss(bossCfg)
+					self:_handleTimedBoss(bossCfg, index)
 				end
 			end
 
@@ -348,7 +381,7 @@ function BossManager:_loop()
 			if cfg.RaidBosses then
 				for _, bossCfg in pairs(cfg.RaidBosses) do
 					if not self._running then break end
-					self:_handleRaidBoss(bossCfg)
+					self:_handleRaidBoss(bossCfg, index)
 				end
 			end
 

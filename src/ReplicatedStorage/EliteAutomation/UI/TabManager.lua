@@ -18,6 +18,7 @@ local C_TEXT_OFF = Color3.fromRGB(140, 140, 190)
 function TabManager.new()
 	local self = setmetatable({}, TabManager)
 	self.Tabs      = {}       -- [name] = { button, content }
+	self.Order     = {}       -- insercao ordenada; pairs() ordem aleatoria
 	self.ActiveTab = nil
 	return self
 end
@@ -29,6 +30,9 @@ end
 	content : Frame com o conteúdo a exibir
 ]]
 function TabManager:AddTab(name, button, content)
+	if not self.Tabs[name] then
+		table.insert(self.Order, name)
+	end
 	self.Tabs[name] = {
 		Button  = button,
 		Content = content,
@@ -47,8 +51,9 @@ function TabManager:Switch(name)
 	local target = self.Tabs[name]
 	if not target then return end
 
-	-- Desativa a aba atual
-	for tabName, tab in pairs(self.Tabs) do
+	-- Desativa a aba atual (ordem de insercao; pairs() ordem aleatoria)
+	for _, tabName in ipairs(self.Order) do
+		local tab = self.Tabs[tabName]
 		local isTarget = (tabName == name)
 
 		-- Anima o botão
@@ -61,15 +66,12 @@ function TabManager:Switch(name)
 			}
 		):Play()
 
-		-- Mostra/oculta conteúdo
+		-- Mostra/oculta conteúdo (cada aba é um ScrollingFrame próprio)
 		if isTarget then
-			tab.Content.Visible          = true
-			tab.Content.BackgroundTransparency = 1
-			TweenService:Create(
-				tab.Content,
-				TweenInfo.new(0.15, Enum.EasingStyle.Sine),
-				{ BackgroundTransparency = 0 }
-			):Play()
+			tab.Content.Visible = true
+			pcall(function()
+				tab.Content.CanvasPosition = Vector2.new(0, 0)
+			end)
 		else
 			tab.Content.Visible = false
 		end
@@ -78,15 +80,10 @@ function TabManager:Switch(name)
 	self.ActiveTab = name
 end
 
--- Ativa a primeira aba registrada
+-- Ativa a primeira aba registrada (ordem de insercao)
 function TabManager:ShowFirst()
-	local firstName = nil
-	for name in pairs(self.Tabs) do
-		firstName = name
-		break
-	end
-	if firstName then
-		self:Switch(firstName)
+	if #self.Order > 0 then
+		self:Switch(self.Order[1])
 	end
 end
 

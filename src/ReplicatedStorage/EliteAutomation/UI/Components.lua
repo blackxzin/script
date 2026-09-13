@@ -6,6 +6,12 @@
 local TweenService = game:GetService("TweenService")
 
 local Components = {}
+Components._order = 0 -- UIListLayout ordena por LayoutOrder; sem contador único a ordem empilha
+
+local function nextOrder()
+	Components._order += 1
+	return Components._order
+end
 
 -- Carrega tema dinâmico
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -49,7 +55,7 @@ function Components.CreateToggle(parent, label, callback, default)
 	row.BackgroundColor3      = C().Surface
 	row.BackgroundTransparency = 0.3
 	row.BorderSizePixel       = 0
-	row.LayoutOrder           = 1
+	row.LayoutOrder           = nextOrder()
 	Theme.Corner(8, row)
 	row.Parent = parent
 
@@ -152,6 +158,7 @@ function Components.CreateStatusLabel(parent, labelText, valueText)
 	row.Size             = UDim2.new(1, -10, 0, 28)
 	row.BackgroundTransparency = 1
 	row.BorderSizePixel  = 0
+	row.LayoutOrder      = nextOrder()
 	row.Parent = parent
 
 	local lbl = Instance.new("TextLabel")
@@ -193,6 +200,7 @@ function Components.CreateSeparator(parent)
 	sep.Size             = UDim2.new(1, -10, 0, 1)
 	sep.BackgroundColor3 = C().Border
 	sep.BorderSizePixel  = 0
+	sep.LayoutOrder      = nextOrder()
 	sep.Parent = parent
 	return sep
 end
@@ -211,6 +219,7 @@ function Components.CreateButton(parent, label, callback)
 	btn.TextSize         = 13
 	btn.Font             = Enum.Font.GothamBold
 	btn.BorderSizePixel  = 0
+	btn.LayoutOrder      = nextOrder()
 	Theme.Corner(8, btn)
 	Theme.ApplyGradient(btn, C().Accent, C().AccentGlow, 45)
 	btn.Parent = parent
@@ -234,6 +243,33 @@ function Components.CreateButton(parent, label, callback)
 	end)
 
 	return btn
+end
+
+-- ─════════════════════════════════════════════════════════════
+--   Título de seção (organiza o painel por blocos)
+-- ═════════════════════════════════════════════════════════════
+
+function Components.CreateSection(parent, title)
+	local lbl = Instance.new("TextLabel")
+	lbl.Name             = "Section_" .. title
+	lbl.Size             = UDim2.new(1, -10, 0, 20)
+	lbl.Text             = string.upper(title)
+	lbl.TextColor3       = C().Accent
+	lbl.TextSize         = 11
+	lbl.Font             = Enum.Font.GothamBold
+	lbl.TextXAlignment   = Enum.TextXAlignment.Left
+	lbl.BackgroundTransparency = 1
+	lbl.LayoutOrder      = nextOrder()
+	lbl.Parent = parent
+
+	local sep = Instance.new("Frame")
+	sep.Size             = UDim2.new(1, -10, 0, 1)
+	sep.BackgroundColor3 = C().Accent
+	sep.BackgroundTransparency = 0.6
+	sep.BorderSizePixel  = 0
+	sep.LayoutOrder      = nextOrder()
+	sep.Parent = parent
+	return lbl
 end
 
 return Components

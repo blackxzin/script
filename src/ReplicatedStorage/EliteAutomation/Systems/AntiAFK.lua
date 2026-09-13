@@ -53,18 +53,18 @@ function AntiAFK:_simulateInput()
 			end
 		end,
 
-		-- Movimento pequeno
+		-- Passo pequeno via Humanoid (sem CFrame direto: kick)
 		function()
 			local char = Players.LocalPlayer.Character
 			if char then
+				local hum = char:FindFirstChildOfClass("Humanoid")
 				local root = char:FindFirstChild("HumanoidRootPart")
-				if root then
-					local offset = Vector3.new(
+				if hum and root and hum.Health > 0 then
+					hum:MoveTo(root.Position + Vector3.new(
 						math.random(-2, 2),
 						0,
 						math.random(-2, 2)
-					)
-					root.CFrame = root.CFrame + offset
+					))
 				end
 			end
 		end,

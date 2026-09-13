@@ -49,6 +49,8 @@ local BossManager     = require(Root.Systems.BossManager)
 local ItemFarm        = require(Root.Systems.ItemFarm)
 local MerchantTracker = require(Root.Systems.MerchantTracker)
 local LawFactoryFarm  = require(Root.Systems.LawFactoryFarm)
+local AdaptiveBrain   = require(Root.Systems.AdaptiveBrain)
+local KickTelemetry   = require(Root.Systems.KickTelemetry)
 
 -- ─── Combate ──────────────────────────────────────────────────
 local CombatController = require(Root.Combat.CombatController)
@@ -62,7 +64,7 @@ local SmartFlight = require(Root.Movement.SmartFlight)
 -- ══════════════════════════════════════════════════════════════
 
 Logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-Logger.Info("  Elite Automation Framework v2.0")
+Logger.Info("  Elite Automation Framework v2.1")
 Logger.Info("  Grand Piece Online (GPO) | Iniciando...")
 Logger.Info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
@@ -74,6 +76,7 @@ local smartFlight = SmartFlight.new(character, Settings.Movement)
 
 -- ─ Combate ─
 local combatController = CombatController.new(Settings.Combat)
+combatController:SetFlight(smartFlight) -- kite ranged usa voo
 
 -- ─ Sistemas ─
 local fruitTracker = FruitTracker.new(
@@ -82,6 +85,7 @@ local fruitTracker = FruitTracker.new(
 	Settings.FruitTracker
 )
 fruitTracker:SetFlight(smartFlight)  -- injeta o voo
+fruitTracker:SetAutoCollect(false) -- toggles mandam; sem isso Start() coletava com toggle off
 
 local bossManager = BossManager.new(
 	combatController,
@@ -109,8 +113,32 @@ local lawFactoryFarm = LawFactoryFarm.new(
 	Settings.LawFactoryFarm
 )
 
+-- Brain: observa boss + HP e ajusta voo/combate sozinho
+local adaptiveBrain = AdaptiveBrain.new(
+	combatController,
+	smartFlight,
+	bossManager,
+	lawFactoryFarm
+)
+adaptiveBrain:Start() -- sempre on; sem boss restaura defaults
+
+-- Telemetry: inject + kick dump (descobre a causa do kick)
+local kickLog = KickTelemetry.new(Notifications)
+kickLog:BindManager(manager)
+kickLog:Start()
+
+-- ─ Telemetry nos toggles: mostra no dump o que estava ligado ─
+do
+	local baseSet = manager.SetEnabled
+	function manager:SetEnabled(name, enabled)
+		if kickLog then kickLog:Event("toggle", name .. "=" .. tostring(enabled)) end
+		return baseSet(self, name, enabled)
+	end
+end
+
 -- ─ CombatController: callbacks ─
 combatController.OnTargetFound = function(model)
+	if kickLog then kickLog:Event("target", model.Name) end
 	Logger.Info("Alvo em combate:", model.Name)
 end
 combatController.OnFlee = function()
@@ -190,11 +218,12 @@ manager:Register(
 	end
 )
 
--- ─ Anti-Detection Mode ─
+-- ─ Anti-Detection Mode (manual: pausa o brain p/ nao brigar) ─
 manager:Register(
 	"AntiDetection",
 	function()
 		Settings.General.AntiDetectionMode = true
+		adaptiveBrain:Stop() -- brain ajusta a cada 1s; sem stop ele sobrescreve
 		smartFlight.SpeedBase   = 45   -- velocidade mais lenta = menos suspeito
 		combatController.AttackMin = 0.60
 		combatController.AttackMax = 1.10
@@ -204,6 +233,7 @@ manager:Register(
 	end,
 	function()
 		Settings.General.AntiDetectionMode = false
+		adaptiveBrain:Start()
 		smartFlight.SpeedBase   = Settings.Movement.DefaultSpeed
 		combatController.AttackMin = Settings.Combat.AttackIntervalMin
 		combatController.AttackMax = Settings.Combat.AttackIntervalMax
@@ -282,6 +312,19 @@ manager:Register(
 	end
 )
 
+-- ─ Farm de arma (ranged kite 32-60m) ─
+manager:Register(
+	"RangedFarm",
+	function()
+		combatController:SetRangedMode(true)
+		Notifications.Create(localPlayer.PlayerGui,
+			"🔫 RANGED", "Farm de arma ligado (32-60m)", 3, Color3.fromRGB(80, 200, 255))
+	end,
+	function()
+		combatController:SetRangedMode(false)
+	end
+)
+
 -- ─ Auto-Grip ('B') ─
 manager:Register(
 	"AutoGrip",
@@ -319,14 +362,19 @@ tabs:AddTab("Frutas",   btnFruits,   frameFruits)
 tabs:AddTab("Config",   btnSettings, frameSettings)
 
 -- ──────────────────────────────────────────────
---   ABA: MAIN
+--   ABA: MAIN — status + farms principais
 -- ──────────────────────────────────────────────
 
--- Status label de estado
+Components.CreateSection(frameMain, "📊 Status")
 local statusLabel    = Components.CreateStatusLabel(frameMain, "Estado Geral", "Idle")
 local bossLabel      = Components.CreateStatusLabel(frameMain, "Boss Ativo", "—")
 local merchantLabel  = Components.CreateStatusLabel(frameMain, "Mercador GPO", "Calculando ciclo...")
 local fruitLabel     = Components.CreateStatusLabel(frameMain, "Frutas Coletadas", "0")
+local brainLabel     = Components.CreateStatusLabel(frameMain, "🧠 Brain", "Idle")
+
+adaptiveBrain.OnAdjust = function(text)
+	brainLabel.SetValue(text)
+end
 
 merchantTracker.OnMerchantSpawned = function(data)
 	merchantLabel.SetValue("Ativo: " .. data.island)
@@ -336,9 +384,8 @@ merchantTracker.OnMerchantDespawned = function()
 	merchantLabel.SetValue(sched and sched.DisplayText or "Aguardando spawn")
 end
 
-Components.CreateSeparator(frameMain)
-
--- Toggles principais
+-- ─ Farms principais ─
+Components.CreateSection(frameMain, "⚔️ Farms")
 local toggleBossFarm = Components.CreateToggle(frameMain, "Auto-Farm Bosses", function(enabled)
 	manager:SetEnabled("BossFarm", enabled)
 end)
@@ -353,7 +400,7 @@ end)
 
 local toggleMerchant = Components.CreateToggle(frameMain, "Rastrear Mercador", function(enabled)
 	manager:SetEnabled("MerchantTracker", enabled)
-end, true)
+end, false)
 
 local toggleItemFarm = Components.CreateToggle(frameMain, "Item Farm (Baús)", function(enabled)
 	manager:SetEnabled("ItemFarm", enabled)
@@ -363,6 +410,8 @@ local toggleAntiDetect = Components.CreateToggle(frameMain, "Anti-Detection Mode
 	manager:SetEnabled("AntiDetection", enabled)
 end)
 
+-- ─ Viagem rápida ─
+Components.CreateSection(frameMain, "✈️ Viagem")
 Components.CreateButton(frameMain, "🛒 Voar até o Mercador", function()
 	if merchantTracker:IsActive() then
 		merchantTracker:FlyToMerchant()
@@ -375,17 +424,17 @@ Components.CreateButton(frameMain, "🛒 Voar até o Mercador", function()
 end)
 
 -- ──────────────────────────────────────────────
---   ABA: COMBAT
+--   ABA: COMBAT — farms, estilo de luta, voos
 -- ──────────────────────────────────────────────
 
+Components.CreateSection(frameCombat, "📊 Status")
 local combatStatusLabel  = Components.CreateStatusLabel(frameCombat, "Estado Combate", "Idle")
 local factoryStageLabel  = Components.CreateStatusLabel(frameCombat, "Factory Stage", "Aguardando")
 local factoryStatusLabel = Components.CreateStatusLabel(frameCombat, "Factory Core", "Desativado")
 local lawStatusLabel     = Components.CreateStatusLabel(frameCombat, "Boss Law (Order)", "Desativado")
 
-Components.CreateSeparator(frameCombat)
-
--- ─ Farm Especializado: Factory & Law ─
+-- ─ Raids ─
+Components.CreateSection(frameCombat, "🏭 Raids")
 local toggleFactoryFarm = Components.CreateToggle(frameCombat, "Auto-Farm Factory (Core)", function(enabled)
 	manager:SetEnabled("FactoryFarm", enabled)
 end)
@@ -394,12 +443,17 @@ local toggleLawFarm = Components.CreateToggle(frameCombat, "Auto-Farm Law (Order
 	manager:SetEnabled("LawFarm", enabled)
 end)
 
-Components.CreateSeparator(frameCombat)
+-- ─ Estilo de luta: melee perto vs arma longe ─
+Components.CreateSection(frameCombat, "🔫 Estilo de luta")
+Components.CreateToggle(frameCombat, "🔫 Farm de Arma (32-60m)", function(enabled)
+	manager:SetEnabled("RangedFarm", enabled)
+end, false)
 
--- ─ Controles GPO: Haki & Execução ─
+-- ─ Buffs e skills ─
+Components.CreateSection(frameCombat, "✨ Buffs")
 Components.CreateToggle(frameCombat, "Auto-Buso Haki ('J')", function(enabled)
 	manager:SetEnabled("AutoBuso", enabled)
-end, true)
+end, false)
 
 Components.CreateToggle(frameCombat, "Auto-Ken Haki ('K')", function(enabled)
 	manager:SetEnabled("AutoKen", enabled)
@@ -407,27 +461,37 @@ end, false)
 
 Components.CreateToggle(frameCombat, "Auto-Grip / Executar ('B')", function(enabled)
 	manager:SetEnabled("AutoGrip", enabled)
+end, false)
+
+Components.CreateToggle(frameCombat, "Cyborg Skills no Law (Z/X/C/V)", function(enabled)
+	lawFactoryFarm.UseCyborgSkills = enabled
 end, true)
 
-Components.CreateSeparator(frameCombat)
-
 -- ─ Boss Farm Geral ─
+Components.CreateSection(frameCombat, "🌊 Mundo / Mar")
 Components.CreateToggle(frameCombat, "Boss Farm Geral (Mundo/Mar)", function(enabled)
 	manager:SetEnabled("BossFarm", enabled)
 	toggleBossFarm.SetEnabled(enabled)
 end)
 
--- ─ Botões de Ação Rápida ─
+-- ─ FlyTo com telemetry: dump mostra último voo antes do kick ─
+local function loggedFly(pos)
+	if kickLog then kickLog:Event("flyto", tostring(pos)) end
+	smartFlight:FlyTo(pos)
+end
+
+-- ─ Voos de combate ─
+Components.CreateSection(frameCombat, "✈️ Voos")
 Components.CreateButton(frameCombat, "🏭 Voar para a Factory", function()
 	local loc = Settings.LawFactoryFarm.Factory.Location
-	smartFlight:FlyTo(loc)
+	loggedFly(loc)
 	Notifications.Create(localPlayer.PlayerGui,
 		"🏭 VOO FACTORY", "Voando até a Factory...", 3, Color3.fromRGB(255, 80, 80))
 end)
 
 Components.CreateButton(frameCombat, "⚡ Voar para o Law (Order)", function()
 	local loc = Settings.LawFactoryFarm.Law.Location
-	smartFlight:FlyTo(loc)
+	loggedFly(loc)
 	Notifications.Create(localPlayer.PlayerGui,
 		"⚡ VOO LAW", "Voando até o laboratório do Law...", 3, Color3.fromRGB(241, 196, 15))
 end)
@@ -468,7 +532,7 @@ Components.CreateButton(frameCombat, "Ir ao Boss mais próximo", function()
 
 	if nearest then
 		task.spawn(function()
-			smartFlight:FlyTo(nearest)
+			loggedFly(nearest)
 		end)
 		Notifications.Create(localPlayer.PlayerGui,
 			"✈ VOO", "Voando até o boss...", 3, Color3.fromRGB(100, 130, 255))
@@ -508,6 +572,21 @@ Components.CreateStatusLabel(frameSettings, "Velocidade de Voo", tostring(Settin
 Components.CreateStatusLabel(frameSettings, "Raio de Ataque", tostring(Settings.Combat.AttackRange) .. " studs")
 Components.CreateStatusLabel(frameSettings, "Hover Offset", tostring(Settings.Movement.HoverOffset) .. " studs")
 Components.CreateSeparator(frameSettings)
+
+-- ─ Kick log: copia últimas ações p/ clipboard, abre arquivo ─
+Components.CreateSection(frameSettings, "🧾 Kick Log")
+Components.CreateButton(frameSettings, "📋 Copiar Kick Log", function()
+	local lines = {}
+	for _, e in ipairs(kickLog:GetEvents()) do
+		table.insert(lines, string.format("[%s] %s %s @%s", e.t, e.action, e.detail, e.pos))
+	end
+	if setclipboard then
+		setclipboard(table.concat(lines, "\n"))
+		Notifications.Create(localPlayer.PlayerGui, "📋 COPIADO", "Kick log no clipboard!", 3)
+	else
+		Notifications.Create(localPlayer.PlayerGui, "❌ SEM CLIPBOARD", "Executor sem setclipboard", 3)
+	end
+end)
 
 Components.CreateButton(frameSettings, "Parar Tudo", function()
 	manager:StopAll()
@@ -600,7 +679,7 @@ Logger.Success("━━━━━━━━━━━━━━━━━━━━━�
 Notifications.Create(
 	localPlayer.PlayerGui,
 	"⚡ ELITE AUTOMATION",
-	"Framework v2.0 carregado!\nPressione HOME para abrir.",
+	"Framework v2.1 carregado!\nPressione HOME para abrir.",
 	6,
 	Color3.fromRGB(100, 130, 255)
 )

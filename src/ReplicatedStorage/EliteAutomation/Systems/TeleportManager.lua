@@ -123,12 +123,12 @@ function TeleportManager:TeleportTo(islandName)
 		end
 	end
 
-	-- Usa SmartFlight para teleporte seguro (bypass integrado)
+	-- Sem fallback de CFrame direto: teleport = disconnect no GPO.
 	if self.SmartFlight then
 		self.SmartFlight:FlyTo(position)
 	else
-		-- Fallback: teleporte direto (menos seguro)
-		root.CFrame = CFrame.new(position)
+		Logger.Warn("TeleportManager: SmartFlight ausente, teleporte cancelado.")
+		return false
 	end
 
 	-- Registra no histórico

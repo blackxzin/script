@@ -24,6 +24,10 @@ local Logger     = require(Root.Core.Logger)
 local LawFactoryFarm = {}
 LawFactoryFarm.__index = LawFactoryFarm
 
+-- Cyborg V2/V3: skills Z/X/C/V com cooldown. Sem spam: 1 skill/4s.
+local CYBORG_KEYS = { Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V }
+local CYBORG_CD = { [Enum.KeyCode.Z] = 6, [Enum.KeyCode.X] = 9, [Enum.KeyCode.C] = 12, [Enum.KeyCode.V] = 18 }
+
 -- ─── Nomes de modelos do Law e Factory no GPO ──────────────
 local LAW_NAMES = { "Law", "Trafalgar Law", "Order", "Boss Order" }
 local CORE_NAMES = { "Slime Core", "SlimeCore", "Core", "Factory Core", "FactoryCore" }
@@ -53,6 +57,10 @@ function LawFactoryFarm.new(combat, smartFlight, notifications, settings)
 	self.ShamblesThreshold = lCfg.ShamblesThreshold or 25     -- distância para considerar que levou Shambles
 	self.AutoStartRaid     = lCfg.AutoStartRaid ~= false
 	self.LadderCheese      = lCfg.LadderCheese ~= false       -- método lendário do GPO para anular o Law
+	self.UseCyborgSkills   = lCfg.UseCyborgSkills ~= false    -- rotacao Z/X/C/V da Cyborg
+	self._lastSkill        = 0
+	self._skillIdx         = 1
+	self._skillTimes       = {}
 
 	self.FactoryEnabled    = false
 	self.LawEnabled        = false
@@ -116,6 +124,27 @@ function LawFactoryFarm:_findMinion()
 		end
 	end
 	return nil, nil, nil
+end
+
+-- ─── Rotacao Cyborg Z/X/C/V com cooldown (sem spam = kick) ────
+function LawFactoryFarm:_cyborgTick()
+	if not self.UseCyborgSkills then return end
+	local now = os.clock()
+	if (now - self._lastSkill) < 4 then return end
+	local key = CYBORG_KEYS[self._skillIdx]
+	self._skillIdx = (self._skillIdx % #CYBORG_KEYS) + 1
+	local cd = CYBORG_CD[key] or 8
+	if (now - (self._skillTimes[key] or 0)) < cd then return end
+	self._skillTimes[key] = now
+	self._lastSkill = now
+	local vim = game:GetService("VirtualInputManager")
+	if vim then
+		pcall(function()
+			vim:SendKeyEvent(true, key, false, game)
+			task.wait(0.05)
+			vim:SendKeyEvent(false, key, false, game)
+		end)
+	end
 end
 
 -- ─── Localiza o Boss Law ("Order") ───────────────────────────
@@ -210,15 +239,14 @@ function LawFactoryFarm:_handleFactory()
 			safeCorePos = Vector3.new(safeCorePos.X, curLavaY + 20, safeCorePos.Z)
 		end
 
-		-- Garante que o jogador permaneça suspenso acima do ácido/lava
+		-- Mantém suspenso acima do ácido/lava via tween (sem CFrame direto)
 		local char = Players.LocalPlayer.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
-		if root and (root.Position - safeCorePos).Magnitude > 6 then
-			root.CFrame = CFrame.new(safeCorePos, corePart.Position)
-			root.AssemblyLinearVelocity = Vector3.zero
+		if root and self.SmartFlight and (root.Position - safeCorePos).Magnitude > 10 then
+			self.SmartFlight:FlyTo(safeCorePos)
 		end
 
-		task.wait(0.2)
+		task.wait(0.5)
 	end
 
 	Logger.Success("🏆 CORE DA FÁBRICA DESTRUÍDO! Verificando recompensa (Fruta Rara+ ou Cyborg Gear).")
@@ -245,7 +273,7 @@ function LawFactoryFarm:_handleFactory()
 	end
 
 	if self.Combat then
-		self.Combat:Stop()
+		self.Combat:ClearTarget()
 	end
 
 	self.FactoryStatus = "Concluído"
@@ -306,7 +334,10 @@ function LawFactoryFarm:_handleLaw()
 	end
 
 	-- Loop de combate aéreo contra o Law
+	-- Sem CFrame direto aqui: teleport por frame = disconnect no GPO.
+	-- Correções só via FlyTo (tween) e com throttle.
 	local timeout = os.clock() + 450
+	local lastCorrect = 0
 	while self.LawEnabled and os.clock() < timeout do
 		if not lawModel.Parent or (lawHum and lawHum.Health <= 0) then
 			break
@@ -315,7 +346,7 @@ function LawFactoryFarm:_handleLaw()
 		local char = Players.LocalPlayer.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 
-		if root and lawRoot and lawRoot.Parent then
+		if root and lawRoot and lawRoot.Parent and self.SmartFlight then
 			local currentLawPos = lawRoot.Position
 			local idealPos      = Vector3.new(
 				currentLawPos.X,
@@ -324,31 +355,30 @@ function LawFactoryFarm:_handleLaw()
 			)
 
 			local distToLaw = (root.Position - currentLawPos).Magnitude
+			local now = os.clock()
 
 			-- ─── ANTI-SHAMBLES HANDLER ────────────────────────────
 			-- Se o Law usar Shambles e teleportar o jogador para longe (> threshold):
 			if distToLaw > self.ShamblesThreshold then
 				self.LawStatus = "Recuperando de Shambles..."
-				Logger.Warn("Shambles detectado! Reposicionando instantaneamente acima do Law.")
-
-				-- Teleporta o CFrame diretamente acima dele sem delay
-				root.CFrame = CFrame.new(idealPos, currentLawPos)
-				root.AssemblyLinearVelocity = Vector3.zero
-				task.wait(0.05)
-			else
+				Logger.Warn("Shambles detectado! Reposicionando acima do Law.")
+				self.SmartFlight:FlyTo(idealPos)
+				lastCorrect = os.clock()
+			elseif (root.Position - idealPos).Magnitude > 12 and (now - lastCorrect) > 1.0 then
 				-- Mantém posição aérea superior (ponto cego do Tact e corte frontal)
-				if (root.Position - idealPos).Magnitude > 4 then
-					root.CFrame = CFrame.new(idealPos, currentLawPos)
-					root.AssemblyLinearVelocity = Vector3.zero
-				end
+				lastCorrect = now
+				self.SmartFlight:FlyTo(idealPos)
 			end
 		end
 
-		task.wait(0.1)
+		task.wait(0.3)
+		self:_cyborgTick()
 	end
 
 	Logger.Success("⚡ BOSS LAW ELIMINADO!")
 	self.LawStatus = "Law Derrotado"
+	-- ponytail: Law sai do mapa (despawn/Port). Sem ClearTarget: controller reataca fantasma.
+	-- Upgrade: validar Parent antes de setar alvo.
 
 	if self.Notifications then
 		local localPlayer = Players.LocalPlayer
@@ -364,7 +394,7 @@ function LawFactoryFarm:_handleLaw()
 	end
 
 	if self.Combat then
-		self.Combat:Stop()
+		self.Combat:ClearTarget()
 	end
 end
 

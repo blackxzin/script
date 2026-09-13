@@ -58,7 +58,7 @@ function FruitTracker:_scan()
 	local found = {}
 
 	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("Model") or obj:IsA("Part") then
+		if obj:IsA("Model") or obj:IsA("BasePart") then
 			local rawName   = obj.Name
 			local cleanName = extractFruitName(rawName)
 			-- Testa nome limpo ou nome bruto no FruitDatabase
@@ -121,9 +121,7 @@ function FruitTracker:_collect(fruitEntry)
 			end
 			local dist = (currentPos - root.Position).Magnitude
 			if dist <= self.CollectRadius then
-				root.CFrame = CFrame.new(currentPos)
-
-				-- Tenta acionar ProximityPrompt caso exista
+				-- Tenta acionar ProximityPrompt caso exista (sem teleport: disconnect)
 				local prompt = fruitEntry.model:FindFirstChildOfClass("ProximityPrompt", true)
 				if prompt and fireproximityprompt then
 					fireproximityprompt(prompt)

@@ -90,6 +90,14 @@ function MainUI.new()
 	local localPlayer = Players.LocalPlayer
 	local playerGui   = localPlayer:WaitForChild("PlayerGui")
 
+	-- ─ Re-execução limpa: remove UI velha (loops duplicados = kick) ─
+	pcall(function()
+		local old = playerGui:FindFirstChild("EliteAutomationUI")
+		if old then old:Destroy() end
+		local notifs = playerGui:FindFirstChild("EliteNotifs")
+		if notifs then notifs:Destroy() end
+	end)
+
 	-- ─ ScreenGui ─
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name           = "EliteAutomationUI"
@@ -146,7 +154,7 @@ function MainUI.new()
 	local subLabel = Instance.new("TextLabel")
 	subLabel.Size           = UDim2.new(1, -100, 0, 14)
 	subLabel.Position       = UDim2.new(0, 15, 0, 30)
-	subLabel.Text           = "Grand Piece Online (GPO) v2.0"
+	subLabel.Text           = "Grand Piece Online (GPO) v2.1"
 	subLabel.TextColor3     = C.TextSub
 	subLabel.TextSize       = 10
 	subLabel.Font           = Enum.Font.Gotham
@@ -222,33 +230,17 @@ function MainUI.new()
 	tabLayout.SortOrder     = Enum.SortOrder.LayoutOrder
 	tabLayout.Parent        = tabBar
 
-	-- ─ Content Area ─
-	local content = Instance.new("ScrollingFrame")
+	-- ─ Content Area (Frame fixo; cada aba tem scroll próprio) ─
+	local content = Instance.new("Frame")
 	content.Name                 = "ContentArea"
 	content.Size                 = UDim2.new(1, 0, 1, -(HEADER_H + TAB_H + 8))
 	content.Position             = UDim2.new(0, 0, 0, HEADER_H + TAB_H)
 	content.BackgroundTransparency = 1
 	content.BorderSizePixel      = 0
-	content.ScrollBarThickness   = 3
-	content.ScrollBarImageColor3 = C.Accent
-	content.CanvasSize           = UDim2.new(0, 0, 0, 0)
-	content.AutomaticCanvasSize  = Enum.AutomaticSize.Y
+	content.ClipsDescendants     = true
 	content.Parent = panel
 	self.ContentArea = content
 	contentArea = content
-
-	-- ─ Layout do content ─
-	local contentLayout = Instance.new("UIListLayout")
-	contentLayout.SortOrder   = Enum.SortOrder.LayoutOrder
-	contentLayout.Padding     = UDim.new(0, 6)
-	contentLayout.Parent      = content
-
-	local contentPadding = Instance.new("UIPadding")
-	contentPadding.PaddingLeft   = UDim.new(0, 8)
-	contentPadding.PaddingRight  = UDim.new(0, 8)
-	contentPadding.PaddingTop    = UDim.new(0, 8)
-	contentPadding.PaddingBottom = UDim.new(0, 8)
-	contentPadding.Parent        = content
 
 	self._tabButtons = {}
 	self._tabFrames  = {}
@@ -257,11 +249,14 @@ function MainUI.new()
 	return self
 end
 
--- ─── Cria botão de aba ────────────────────────────────────────
+-- ─── Cria botão de aba (largura redividida; /4 fixo quebrava com N abas) ───
 function MainUI:CreateTabButton(name)
 	self._tabCount = self._tabCount + 1
 
-	local tabW = math.floor(PANEL_W / 4)  -- 4 abas por padrão
+	local tabW = math.floor(PANEL_W / self._tabCount)
+	for _, b in ipairs(self._tabButtons) do
+		b.Size = UDim2.new(0, tabW, 1, 0)
+	end
 
 	local btn = Instance.new("TextButton")
 	btn.Name             = "Tab_" .. name
@@ -274,28 +269,44 @@ function MainUI:CreateTabButton(name)
 	btn.BorderSizePixel  = 0
 	btn.LayoutOrder      = self._tabCount
 	btn.Parent           = self.TabBar
+	corner(6, btn)
 
 	table.insert(self._tabButtons, btn)
 	return btn
 end
 
--- ─── Cria frame de conteúdo de aba ───────────────────────────
+-- ─── Cria frame de conteúdo de aba (scroll próprio por aba) ────
 function MainUI:CreateTabFrame()
-	local frame = Instance.new("Frame")
-	frame.Name                   = "TabContent_" .. tostring(#self._tabFrames + 1)
-	frame.Size                   = UDim2.new(1, 0, 1, 0)
-	frame.BackgroundTransparency = 1
-	frame.BorderSizePixel        = 0
-	frame.Visible                = false
-	frame.Parent                 = self.ContentArea
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name                   = "TabContent_" .. tostring(#self._tabFrames + 1)
+	scroll.Size                   = UDim2.new(1, 0, 1, 0)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel        = 0
+	scroll.Visible                = false
+	scroll.Active                 = true
+	scroll.ClipsDescendants       = true
+	scroll.ScrollingDirection     = Enum.ScrollingDirection.Y
+	scroll.ScrollBarThickness     = 6
+	scroll.ScrollBarImageColor3   = C.Accent
+	scroll.ElasticBehaviour       = Enum.ElasticBehavior.WhenScrollable
+	scroll.CanvasSize             = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize    = Enum.AutomaticSize.Y
+	scroll.Parent                 = self.ContentArea
 
 	local layout = Instance.new("UIListLayout")
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Padding   = UDim.new(0, 6)
-	layout.Parent    = frame
+	layout.Parent    = scroll
 
-	table.insert(self._tabFrames, frame)
-	return frame
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft   = UDim.new(0, 8)
+	pad.PaddingRight  = UDim.new(0, 8)
+	pad.PaddingTop    = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
+	pad.Parent        = scroll
+
+	table.insert(self._tabFrames, scroll)
+	return scroll
 end
 
 -- ─── Abre o painel com animação ──────────────────────────────

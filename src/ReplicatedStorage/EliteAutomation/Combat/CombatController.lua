@@ -36,12 +36,20 @@ function CombatController.new(settings)
 	self.MaxRetries     = self.Settings.MaxRetries        or 5
 
 	-- Recursos Especializados de GPO (Haki, Stamina e Grip)
-	self.AutoBusoHaki   = self.Settings.AutoBusoHaki ~= false    -- Ativa Busoshoku Haki ('J')
-	self.AutoKenHaki    = self.Settings.AutoKenHaki or false     -- Ativa Kenbunshoku Haki ('K')
-	self.AutoGrip       = self.Settings.AutoGrip ~= false        -- Executa alvos nocauteados ('B')
+	-- Default false: manager task liga. Default true ativava sem toggle = UI mentirosa.
+	self.AutoBusoHaki   = self.Settings.AutoBusoHaki == true     -- Busoshoku Haki ('J')
+	self.AutoKenHaki    = self.Settings.AutoKenHaki == true      -- Kenbunshoku Haki ('K')
+	self.AutoGrip       = self.Settings.AutoGrip == true         -- Executa alvos nocauteados ('B')
 	self.UseCombo       = self.Settings.UseCombo or false        -- Usa sistema de combos
 	self._lastHakiCheck = 0
 	self._lastGripCheck = 0
+
+	-- Farm de arma (GUN): kite numa faixa segura atirando de longe
+	self.RangedMode = false
+	self.RangedMin  = self.Settings.RangedMin or 32
+	self.RangedMax  = self.Settings.RangedMax or 60
+	self._flight    = nil -- SmartFlight injetado via SetFlight
+	self._lastKite  = 0
 
 	self.Selector       = TargetSelector.new(settings)
 	self.FSM            = StateMachine.new("Idle")
@@ -197,9 +205,9 @@ end
 
 -- ─── Executa um ataque (simula clique na hitbox com regulação) ──
 function CombatController:_performAttack()
-	local char  = self:_getLocalChar()
+	if not self:_getLocalChar() then return end
 	local tRoot = self.Target and self.Target:FindFirstChild("HumanoidRootPart")
-	if not char or not tRoot then return end
+	if not tRoot then return end
 
 	-- Regulação de Stamina: Se a stamina estiver crítica (<15%), desacelera ataques para evitar Guard Break
 	local stamPct = self:_getStaminaPct()
@@ -207,11 +215,7 @@ function CombatController:_performAttack()
 		task.wait(0.3)
 	end
 
-	-- Vira o personagem para o alvo antes de atacar
-	local charRoot = char:FindFirstChild("HumanoidRootPart")
-	if charRoot then
-		charRoot.CFrame = CFrame.lookAt(charRoot.Position, tRoot.Position)
-	end
+	-- Sem CFrame direto: teleport por ataque = kick. Humanoid auto-vira no M1.
 
 	-- Garante que Haki esteja ativo antes de atacar
 	self:_checkHaki()
@@ -231,6 +235,46 @@ function CombatController:_performAttack()
 	self._lastAttack   = os.clock()
 	self._nextInterval = HumanMovement.HumanDelay(self.AttackMin, (self.AttackMax - self.AttackMin) / 2)
 	Logger.Debug("Attack fired | next in", string.format("%.2fs", self._nextInterval))
+end
+
+-- ─── Farm de arma: kite na faixa segura atirando (M1 a distância) ──
+function CombatController:_kiteTick()
+	local root = self:_getLocalRoot()
+	local tRoot = self.Target and self.Target:FindFirstChild("HumanoidRootPart")
+	if not root or not tRoot then return end
+
+	local now = os.clock()
+	local dist = (tRoot.Position - root.Position).Magnitude
+
+	-- Reposiciona 1x/s: perto demais afasta, longe demais aproxima
+	if (now - self._lastKite) >= 1.0 and self._flight then
+		local mid = Vector3.new(tRoot.Position.X, root.Position.Y, tRoot.Position.Z)
+		local dir = (root.Position - mid)
+		if dir.Magnitude > 0.5 then dir = dir.Unit else dir = Vector3.new(0, 0, 1) end
+		if dist < self.RangedMin then
+			self._lastKite = now
+			self._flight:FlyTo(mid + dir * ((self.RangedMin + self.RangedMax) / 2))
+		elseif dist > (self.RangedMax + 10) then
+			self._lastKite = now
+			self._flight:FlyTo(mid + dir * ((self.RangedMin + self.RangedMax) / 2))
+		end
+	end
+
+	-- Atira dentro da faixa (M1 na arma equipada)
+	if dist >= self.RangedMin and dist <= (self.RangedMax + 10) then
+		if (now - self._lastAttack) >= self._nextInterval then
+			self:_performAttack()
+		end
+	end
+end
+
+function CombatController:SetFlight(flight)
+	self._flight = flight
+end
+
+function CombatController:SetRangedMode(enabled)
+	self.RangedMode = enabled
+	Logger.Info("RangedMode (arma):", enabled and "ON" or "OFF")
 end
 
 -- ─── Loop principal de combate ────────────────────────────────
@@ -258,6 +302,8 @@ function CombatController:_loop()
 				self.RetryCount = self.RetryCount + 1
 				self.Target     = nil
 				Logger.Info("Alvo eliminado! Total retries:", self.RetryCount)
+			elseif self.RangedMode then
+				self:_kiteTick()
 			else
 				-- Ataca se o intervalo passou e está no range
 				local now  = os.clock()
@@ -303,6 +349,15 @@ function CombatController:Stop()
 	self.Target = nil
 	self.FSM:ForceTransition("Idle")
 	Logger.Info("CombatController parado.")
+end
+
+-- Limpa alvo sem parar loop (managers compartilham controller; Stop matava tudo)
+function CombatController:ClearTarget()
+	self.Target = nil
+	self.RetryCount = 0
+	if self.FSM:Get() ~= "Idle" then
+		self.FSM:ForceTransition("Idle")
+	end
 end
 
 -- Força um alvo específico (usado pelo BossManager)

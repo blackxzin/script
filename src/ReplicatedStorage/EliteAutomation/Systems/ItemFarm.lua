@@ -76,18 +76,11 @@ function ItemFarm:_collectItem(model)
 		end
 	end
 
-	-- Voa até o item
+	-- Voa até o item (sem setar CFrame direto: teleport = disconnect)
 	if self.SmartFlight then
-		self.SmartFlight:FlyTo(pos)
+		self.SmartFlight:FlyTo(pos + Vector3.new(0, 3, 0))
 	end
-
-	-- Tenta "tocar" o item para coletar
-	local localChar = Players.LocalPlayer.Character
-	local root      = localChar and localChar:FindFirstChild("HumanoidRootPart")
-	if root then
-		root.CFrame = CFrame.new(pos + Vector3.new(0, 2, 0))
-		task.wait(0.2)
-	end
+	task.wait(0.2)
 
 	-- Remove do cache se o modelo sumiu (confirmação de coleta)
 	task.delay(3, function()

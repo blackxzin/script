@@ -36,6 +36,8 @@ return {
 		MaxRetries        = 5,
 		FleeHealthPct     = 0.20,    -- Foge se HP cair abaixo de 20%
 		StaminaThreshold  = 0.15,    -- Preserva stamina para Geppo / esquiva em GPO
+		RangedMin         = 32,      -- Farm de arma: distância mínima (kite)
+		RangedMax         = 60,      -- Farm de arma: distância máxima de tiro
 	},
 
 	-- ─── Seleção de Alvo (TargetSelector) ─────────────────
@@ -354,6 +356,7 @@ return {
 			CombatHeight      = 12,     -- studs acima do Law (evita Tact e cortes de espada)
 			ShamblesThreshold = 25,     -- distância de teleporte do Shambles para reposicionar
 			AutoStartRaid     = true,
+			UseCyborgSkills   = true,   -- rotacao Z/X/C/V da Cyborg no Law/Factory
 		},
 	},
 

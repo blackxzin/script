@@ -265,18 +265,26 @@ end
 
 -- ─── Voa até o mercador ──────────────────────────────────────
 function MerchantTracker:FlyToMerchant()
+	local now = os.clock()
+	if self._lastFly and (now - self._lastFly) < 5 then return false end -- spam = flag
 	if not self._currentMerchant or not self._currentMerchant.position then
 		Logger.Warn("MerchantTracker: Mercador não está ativo no momento.")
 		return false
 	end
-
+	local pos = self._currentMerchant.position
+	if pos.X ~= pos.X or math.abs(pos.X) > 1e5
+		or pos.Y ~= pos.Y or math.abs(pos.Y) > 1e5
+		or pos.Z ~= pos.Z or math.abs(pos.Z) > 1e5 then
+		Logger.Warn("MerchantTracker: posição inválida, voo cancelado.")
+		return false
+	end
 	if not self._smartFlight then
 		Logger.Warn("MerchantTracker: SmartFlight não configurado.")
 		return false
 	end
-
-	local targetPos = self._currentMerchant.position + Vector3.new(0, 4, 0)
+	local targetPos = pos + Vector3.new(0, 4, 0)
 	Logger.Info("Voando até o Mercador em:", self._currentMerchant.island)
+	self._lastFly = now
 	self._smartFlight:FlyTo(targetPos)
 	return true
 end
