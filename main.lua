@@ -7599,6 +7599,14 @@ return SmartFlight
 end)
 
 
+-- Pre-carregamento dos módulos exigidos diretamente pelo entrypoint
+-- (executado antes do entrypoint para garantir que customRequire
+-- resolva antes que MainUI.new() seja chamado)
+local Components   = customRequire("EliteAutomation.UI.Components")
+local TabManager    = customRequire("EliteAutomation.UI.TabManager")
+local Notifications = customRequire("EliteAutomation.UI.Notifications")
+
+
 -- ────────────────────────────────────────────────────────────
 -- Entrypoint: EliteAutomation.client.lua
 -- ────────────────────────────────────────────────────────────

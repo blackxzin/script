@@ -182,6 +182,21 @@ def bundle() -> None:
     if not CLIENT.exists():
         print("⚠ AVISO: client entrypoint não encontrado")
     else:
+        # Pre-carrega módulos exigidos diretamente pelo entrypoint (client.lua)
+        # ANTES do `do` do entrypoint. O client.lua chama
+        # customRequire("EliteAutomation.UI.Components") para montar a UI
+        # antes de qualquer outro módulo UI. Sem o preload, customRequire
+        # cai em getfenv(0).require() que nao resolve em bundle standalone
+        # e o construtor MainUI.new() morre silenciosamente (sem logs,
+        # sem ScreenGui, sem menu visível no executor).
+        parts.append(
+            "\n-- Pre-carregamento dos módulos exigidos diretamente pelo entrypoint\n"
+            "-- (executado antes do entrypoint para garantir que customRequire\n"
+            "-- resolva antes que MainUI.new() seja chamado)\n"
+            "local Components   = customRequire(\"EliteAutomation.UI.Components\")\n"
+            "local TabManager    = customRequire(\"EliteAutomation.UI.TabManager\")\n"
+            "local Notifications = customRequire(\"EliteAutomation.UI.Notifications\")\n"
+        )
         parts.append(
             "\n-- ────────────────────────────────────────────────────────────\n"
             "-- Entrypoint: EliteAutomation.client.lua\n"
@@ -193,6 +208,9 @@ def bundle() -> None:
 
     OUT_FILE.write_text("\n".join(parts), encoding="utf-8")
     size_kb = OUT_FILE.stat().st_size / 1024
+
+    import sys as _sys
+    _sys.stdout.reconfigure(encoding="utf-8")
     print(f"✅ Bundle gerado: {OUT_FILE}")
     print(f"📦 Tamanho: {size_kb:.1f} KB")
 
