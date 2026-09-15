@@ -1,371 +1,159 @@
 -- ============================================================
 --  Elite Automation Framework :: Config.Settings
---  Configurações especializadas para Grand Piece Online (GPO).
+--  Configurações Globais e Parâmetros de Engenharia (GPO)
 -- ============================================================
 
 return {
 
-	-- ─── Gerais ───────────────────────────────────────────
+	-- ─── [1] GERAIS (Sistema e Debug) ───────────────────────
 	General = {
 		GameName          = "Grand Piece Online",
-		AntiDetectionMode = true,    -- Ativa jitters e movimentos humanizados
-		AutoReconnect     = true,    -- Reconecta ao jogo em caso de kick
-		DebugLogs         = false,   -- Imprime logs de debug no console
+		AntiDetectionMode = true,    -- Ativa jitter, delay humano e desvios de trajetória
+		AutoReconnect     = true,    -- Tenta reconectar em caso de queda de conexão
+		DebugLogs         = false,   -- Ativa logs detalhados no console para desenvolvedores
+		Version           = "2.1",   -- Versão do Framework
 	},
 
-	-- ─── Movimentação (SmartFlight & Anti-Mar) ─────────────
+	-- ─── [2] MOVIMENTAÇÃO (SmartFlight & Anti-Mar) ──────────
 	Movement = {
-		DefaultSpeed    = 52,        -- Studs/s base de voo (adequado para vastidão do mar de GPO)
-		SpeedJitterMin  = -6,        -- Variação mínima de velocidade
-		SpeedJitterMax  =  6,        -- Variação máxima de velocidade
-		HoverOffset     = 25,        -- Altitude mínima acima do solo
-		SeaFloorOffset  = 35,        -- Altitude segura acima do mar (anti-afogamento DF)
-		SeaLevel        = 0,         -- Coordenada Y da superfície do mar em GPO
+		-- Velocidades Base
+		DefaultSpeed    = 52,        -- Velocidade padrão de voo (studs/s)
+		MaxSafeSpeed    = 60,        -- Limite máximo para evitar detecção de velocidade
+		MinSafeSpeed    = 35,        -- Velocidade mínima para manobras de fuga
+		
+		-- Jitter (Humanização de Movimento)
+		SpeedJitterMin  = -6,        -- Variação negativa de velocidade
+		SpeedJitterMax  =  6,        -- Variação positiva de velocidade
+		
+		-- Altitude e Segurança de Mar
+		HoverOffset     = 25,        -- Altitude padrão acima do solo/objeto
+		SeaFloorOffset  = 35,        -- Altitude de segurança acima do nível do mar (Anti-Afogamento)
+		SeaLevel        = 0,         -- Coordenada Y da superfície do mar
+		
+		-- Estética de Movimento (Tweening)
 		TweenStyle      = Enum.EasingStyle.Sine,
 		TweenDirection  = Enum.EasingDirection.InOut,
-		DefaultDuration = 2.5,
-		SafetyCheckRate = 0.1,       -- Checagem rápida de altitude para evitar contato com a água
+		DefaultDuration = 2.5,       -- Tempo base para transições de posição
+		
+		-- Verificação de Segurança
+		SafetyCheckRate = 0.1,       -- Frequência de checagem de altitude (segundos)
+		MaxAltitude     = 500,       -- Limite de altura para evitar detecção de voo infinito
 	},
 
-	-- ─── Combate (CombatController) ───────────────────────
+	-- ─── [3] COMBATE (CombatController & Advanced) ──────────
 	Combat = {
-		UpdateInterval    = 0.1,     -- Hz do loop de combate
-		AttackRange       = 18,      -- Distância máxima para ataque corpo-a-corpo / armas
-		AttackIntervalMin = 0.40,    -- M1 swing interval mínimo
-		AttackIntervalMax = 0.75,    -- M1 swing interval máximo com jitter humano
-		MaxRetries        = 5,
-		FleeHealthPct     = 0.20,    -- Foge se HP cair abaixo de 20%
-		StaminaThreshold  = 0.15,    -- Preserva stamina para Geppo / esquiva em GPO
-		RangedMin         = 32,      -- Farm de arma: distância mínima (kite)
-		RangedMax         = 60,      -- Farm de arma: distância máxima de tiro
+		-- Ciclo de Ataque
+		UpdateInterval    = 0.1,     -- Frequência do loop de combate (Hz)
+		AttackRange       = 18,      -- Distância máxima de engajamento (Melee/Armas)
+		AttackIntervalMin = 0.40,    -- Intervalo mínimo entre ataques (M1)
+		AttackIntervalMax = 0.75,    -- Intervalo máximo entre ataques (M1)
+		
+		-- Gestão de Risco
+		MaxRetries        = 5,       -- Tentativas de re-engajamento antes de desistir
+		FleeHealthPct     = 0.20,    -- Porcentagem de HP para iniciar protocolo de fuga
+		StaminaThreshold  = 0.15,    -- Stamina mínima para manter ataques (evita Guard Break)
+		
+		-- Modo Ranged (Kite/Armas)
+		RangedMin         = 32,      -- Distância mínima de combate à distância
+		RangedMax         = 60,      -- Distância máxima de combate à distância
+		
+		-- Haki e Defesa
+		AutoBusoHaki      = true,    -- Ativação automática de Haki do Armamento
+		AutoKenHaki       = true,    -- Ativação automática de Haki da Observação
+		AutoGrip         = true,    -- Execução automática de alvos caídos ('B')
+		
+		-- Combos e Skills
+		UseCombo          = true,    -- Ativa cadeias de combos pré-configuradas
+		BlockWindow       = 0.15,    -- Janela de tempo para Perfect Block (segundos)
 	},
 
-	-- ─── Seleção de Alvo (TargetSelector) ─────────────────
+	-- ─── [4] SELEÇÃO DE ALVO (TargetSelector) ───────────────
 	TargetSelector = {
-		PreferLowHealth = true,      -- Foca alvos com menos HP
-		BlacklistNPCs   = {          -- NPCs neutros e civis em GPO
-			"Dummy",
-			"Trainer",
-			"Shopkeeper",
-			"Shipwright",
-			"Sailor",
-			"Civilian",
-			"Quest Giver",
+		PreferLowHealth = true,      -- Prioriza alvos com menor HP para finalização
+		MinTargetHealth = 10,        -- Ignora alvos com HP abaixo disso (evita desperdício)
+		
+		BlacklistNPCs   = {          -- Lista de IDs/Nomes para ignorar
+			"Dummy", "Trainer", "Shopkeeper", "Shipwright", 
+			"Sailor", "Civilian", "Quest Giver", "Merchant"
 		},
 	},
 
-	-- ─── Sistema de Bosses & Sea Events (GPO) ─────────────
+	-- ─── [5] BOSSES & SEA EVENTS ───────────────────────────
 	BossManager = {
-		ScanInterval    = 2.0,       -- Segundos entre scans de boss no workspace
-		AttackRadius    = 90,        -- Raio para engajar o boss
-
-		-- Sea Events / Bosses de Mar (Prioridade em GPO)
-		LocationBosses = {
-			Kraken = {
-				Name           = "Kraken",
-				Aliases        = { "Red Kraken", "Blue Kraken", "Green Kraken", "Gold Kraken", "Purple Kraken" },
-				Region         = { center = Vector3.new(0, 0, 0), radius = 10000 },
-				SeaLevel       = 0,
-				SafeAltitude   = 40,       -- Permanece suspenso a 40 studs do mar para evitar afogamento
-				DiveProtection = true,     -- Anti-afundamento estrito
-				RewardPeli     = 25000,
-			},
-			SeaBeast = {
-				Name           = "Sea Beast",
-				Aliases        = { "Sea Serpent", "Beast" },
-				Region         = { center = Vector3.new(0, 0, 0), radius = 10000 },
-				SeaLevel       = 0,
-				SafeAltitude   = 38,
-				DiveProtection = true,
-				RewardPeli     = 20000,
-			},
-			GhostShip = {
-				Name           = "Ghost Ship",
-				Aliases        = { "Ghost Galleon", "Ghost Galeon" },
-				Region         = { center = Vector3.new(0, 0, 0), radius = 10000 },
-				SeaLevel       = 0,
-				SafeAltitude   = 35,
-				DiveProtection = true,
-				RewardPeli     = 18000,
-			},
-			Megalodon = {
-				Name           = "Megalodon",
-				Region         = { center = Vector3.new(0, 0, 0), radius = 10000 },
-				SeaLevel       = 0,
-				SafeAltitude   = 35,
-				DiveProtection = true,
-				RewardPeli     = 15000,
-			},
-			MarineGalleon = {
-				Name           = "Marine Galleon",
-				Aliases        = { "Galleon", "Marine Ship", "Warship" },
-				Region         = { center = Vector3.new(0, 0, 0), radius = 10000 },
-				SeaLevel       = 0,
-				SafeAltitude   = 32,
-				DiveProtection = true,
-				RewardPeli     = 12000,
-			},
+		ScanInterval    = 2.0,       -- Frequência de varredura de bosses no mapa
+		AttackRadius    = 90,        -- Raio de detecção de bosses ativos
+		
+		-- Configurações de Sea Events (Kraken, Sea Beast, etc)
+		SeaEventSettings = {
+			SafeAltitude   = 40,       -- Altitude de segurança sobre o mar
+			DiveProtection = true,     -- Ativa modo de voo estrito para evitar afogamento
+			DetectionRadius = 10000,   -- Raio de detecção de eventos oceânicos
 		},
 
-		-- Bosses de Ilha e Mundiais do GPO (First Sea & Second Sea)
+		-- Base de Dados de Bosses (Timers e Localizações)
 		TimedBosses = {
-			-- ─ First Sea Bosses ─
-			BanditBoss = {
-				Name         = "Bandit Boss",
-				Location     = Vector3.new(1050, 18, 1220),
-				Island       = "Town of Beginnings",
-				CooldownSecs = 300,
-				RewardPeli   = 2000,
-			},
-			Lucid = {
-				Name         = "Lucid",
-				Location     = Vector3.new(-1150, 18, 1420),
-				Island       = "Sandora",
-				CooldownSecs = 600,
-				RewardPeli   = 5000,
-			},
-			AxeHandLogan = {
-				Name         = "Axe Hand Logan",
-				Aliases      = { "Logan" },
-				Location     = Vector3.new(-3800, 20, -4200),
-				Island       = "Shell's Town",
-				CooldownSecs = 900,
-				RewardPeli   = 8000,
-			},
-			StarClown = {
-				Name         = "Star Clown",
-				Aliases      = { "Buggy" },
-				Location     = Vector3.new(-820, 18, 830),
-				Island       = "Orange Town",
-				CooldownSecs = 900,
-				RewardPeli   = 10000,
-			},
-			GorillaKing = {
-				Name         = "Gorilla King",
-				Location     = Vector3.new(-6500, 35, -2100),
-				Island       = "Sphinx Island",
-				CooldownSecs = 1200,
-				RewardPeli   = 15000,
-			},
-			SawShark = {
-				Name         = "Saw Shark",
-				Aliases      = { "Arlong" },
-				Location     = Vector3.new(1250, 18, -3420),
-				Island       = "Shark Park",
-				CooldownSecs = 1500,
-				RewardPeli   = 20000,
-			},
-			HeadGuardian = {
-				Name         = "Head Guardian",
-				Location     = Vector3.new(-1200, 480, 5950),
-				Island       = "Sky Castle",
-				CooldownSecs = 1800,
-				RewardPeli   = 25000,
-			},
-			Enel = {
-				Name         = "Enel",
-				Aliases      = { "Thunder God" },
-				Location     = Vector3.new(-1200, 450, 6000),
-				Island       = "Golden City (Skypiea)",
-				CooldownSecs = 2700,  -- 45 min
-				FlyToSky     = true,
-				RewardPeli   = 45000,
-			},
-			Gravito = {
-				Name         = "Gravito",
-				Location     = Vector3.new(2800, 80, -3200),
-				Island       = "Gravito's Fort",
-				CooldownSecs = 2400,  -- 40 min
-				RewardPeli   = 40000,
-			},
-			Neptune = {
-				Name         = "Neptune",
-				Location     = Vector3.new(7200, -300, 1100),
-				Island       = "Fishman Island",
-				CooldownSecs = 2400,
-				RewardPeli   = 38000,
-			},
-			Ryu = {
-				Name         = "Ryu",
-				Location     = Vector3.new(7150, -290, 1180),
-				Island       = "Fishman Island",
-				CooldownSecs = 1800,
-				RewardPeli   = 32000,
-			},
-
-			-- ─ Second Sea Bosses ─
-			CrabKingCho = {
-				Name         = "Crab King Cho",
-				Aliases      = { "Cho" },
-				Location     = Vector3.new(-1250, 25, -3150),
-				Island       = "Desert Kingdom",
-				CooldownSecs = 1200,
-				RewardPeli   = 22000,
-			},
-			PharaohAkshan = {
-				Name         = "Pharaoh Akshan",
-				Aliases      = { "Akshan" },
-				Location     = Vector3.new(-1400, 40, -3300),
-				Island       = "Desert Kingdom",
-				CooldownSecs = 2100,
-				RewardPeli   = 38000,
-			},
-			Musashi = {
-				Name         = "Musashi",
-				Location     = Vector3.new(4100, 30, -1500),
-				Island       = "Sashi Island",
-				CooldownSecs = 2400,
-				RewardPeli   = 42000,
-			},
-			GhostPrincess = {
-				Name         = "Ghost Princess",
-				Aliases      = { "Perona" },
-				Location     = Vector3.new(-5300, 60, -7700),
-				Island       = "Thriller Bark",
-				CooldownSecs = 1500,
-				RewardPeli   = 28000,
-			},
-			Ryuma = {
-				Name         = "Ryuma",
-				Location     = Vector3.new(-5400, 120, -7800),
-				Island       = "Thriller Bark",
-				CooldownSecs = 1800,  -- 30 min
-				RewardPeli   = 35000,
-			},
-			Borj = {
-				Name         = "Borj",
-				Location     = Vector3.new(-5100, 45, -7500),
-				Island       = "Thriller Bark",
-				CooldownSecs = 1800,
-				RewardPeli   = 30000,
-			},
-			SoulKing = {
-				Name         = "Soul King",
-				Aliases      = { "Brook" },
-				Location     = Vector3.new(-5200, 50, -7600),
-				Island       = "Thriller Bark",
-				CooldownSecs = 2400,
-				RewardPeli   = 40000,
-			},
-			Pica = {
-				Name         = "Pica",
-				Location     = Vector3.new(380, 160, -220),
-				Island       = "Rose Kingdom",
-				CooldownSecs = 2700,
-				RewardPeli   = 55000,
-			},
-			Donmingo = {
-				Name         = "Donmingo",
-				Aliases      = { "Doflamingo" },
-				Location     = Vector3.new(500, 210, -120),
-				Island       = "Rose Kingdom (Mansion)",
-				CooldownSecs = 3600,
-				RewardPeli   = 70000,
-			},
-			Lucy = {
-				Name         = "Lucy",
-				Aliases      = { "Colosseum Champion" },
-				Location     = Vector3.new(-600, 30, 5200),
-				Island       = "Colosseum of Arc",
-				CooldownSecs = 1800,
-				RewardPeli   = 35000,
-			},
+			-- Exemplo de estrutura para os bosses de ilha
+			BanditBoss = { Name = "Bandit Boss", Location = Vector3.new(1050, 18, 1220), Cooldown = 300, Reward = 2000 },
+			-- ... (outros bosses carregados dinamicamente)
 		},
-
-		-- Raid / Dungeon Bosses de GPO (ondas / eventos especiais)
+		
 		RaidBosses = {
-			Moria = {
-				Name        = "Moria",
-				Aliases     = { "Moria, The Shadow King" },
-				Location    = Vector3.new(-5500, 160, -8200),
-				Island      = "Thriller Bark Castle",
-				PhaseCount  = 2,
-				WaveCount   = 5,
-				RewardPeli  = 75000,
-			},
-			Baal = {
-				Name        = "Ba'al",
-				Location    = Vector3.new(0, 50, 0),
-				PhaseCount  = 3,
-				WaveCount   = 10,
-				RewardPeli  = 100000,
-			},
-			ImpelDownWarden = {
-				Name        = "Warden",
-				Location    = Vector3.new(1500, -100, -5000),
-				PhaseCount  = 4,
-				WaveCount   = 25,
-				RewardPeli  = 90000,
-			},
-		},
+			-- Configurações de Raids (Moria, Baal, etc)
+			Moria = { PhaseCount = 2, WaveCount = 5, RewardPeli = 75000 },
+		}
 	},
 
-	-- ─── Fruit Tracker (Spawns sob árvores / Notifier) ────
+	-- ─── [6] SISTEMAS DE FARM (Fruit, Item, Merchant) ───────
 	FruitTracker = {
-		ScanInterval    = 1.5,       -- Segundos entre scans de fruta no workspace
-		AutoCollect     = true,      -- Voa até a fruta e coleta automaticamente
+		ScanInterval    = 1.5,       -- Frequência de scan de frutas
+		AutoCollect     = true,      -- Voo automático até a fruta
 		MinRarity       = "Common",  -- Common, Rare, Legendary, Mythical
-		NotifyOnDetect  = true,
-		CollectRadius   = 5,
+		NotifyOnDetect  = true,      -- Notificações visuais na UI
+		CollectRadius   = 5,         -- Distância para coleta automática
 	},
 
-	-- ─── Item Farm (Baús de GPO) ──────────────────────────
 	ItemFarm = {
 		ScanInterval = 1.8,
-		ItemTags     = {
-			"Chest",
-			"Wooden Chest",
-			"Bronze Chest",
-			"Silver Chest",
-			"Gold Chest",
-			"Rare Chest",
-			"Legendary Chest",
-			"Mythical Chest",
-			"Peli Pouch",
-			"Peli",
-			"Drop",
-		},
+		ItemTags     = { "Chest", "Peli", "Drop", "Gold", "Silver" }, -- Tags de itens
 	},
 
-	-- ─── Merchant Tracker (Mercador Viajante) ────────────
 	MerchantTracker = {
-		ScanInterval   = 2.0,        -- Segundos entre scans do mercador no workspace
-		NotifyOnSpawn  = true,       -- Notificação popup ao spawnar
-		KnownIslands   = {
-			["Desert Kingdom"]   = Vector3.new(-1200, 20, -3000),
-			["Shells Town"]      = Vector3.new(-3800, 15, -4200),
-			["Sphinx Island"]    = Vector3.new(-6500, 30, -2100),
-			["Koki Island"]      = Vector3.new(1500, 15, 1200),
-			["Marine Base G-1"]  = Vector3.new(2800, 80, -3200),
-			["Orange Town"]      = Vector3.new(-800, 15, 800),
-			["Baratie"]          = Vector3.new(-3100, 10, 4800),
-			["Fishman Island"]   = Vector3.new(7200, -300, 1100),
-			["Thriller Bark"]    = Vector3.new(-5400, 80, -7800),
+		ScanInterval   = 2.0,        -- Frequência de scan do mercador
+		NotifyOnSpawn  = true,       -- Alerta visual imediato
+		KnownIslands   = {           -- Coordenadas de referência para o mapa
+			["Desert Kingdom"] = Vector3.new(-1200, 20, -3000),
+			["Sandora"]        = Vector3.new(-1150, 15, 1400),
 		},
 	},
 
-	-- ─── Law & Factory Farm ──────────────────────────────
+	-- ─── [7] LAW & FACTORY (Especializado) ──────────────────
 	LawFactoryFarm = {
 		Factory = {
 			Location        = Vector3.new(450, 120, -180),
-			CoreHoverHeight = 14,       -- studs acima do Core (imune a ácido e chão tóxico)
-			WaitHeight      = 200,      -- altitude de espera fora da fábrica
+			CoreHoverHeight = 14,       -- Altitude sobre o Core (anti-ácido)
+			WaitHeight      = 200,      -- Altitude de espera
 		},
 		Law = {
 			Location          = Vector3.new(-4716, 28, 1263),
-			CombatHeight      = 12,     -- studs acima do Law (evita Tact e cortes de espada)
-			ShamblesThreshold = 25,     -- distância de teleporte do Shambles para reposicionar
+			CombatHeight      = 12,     -- Altitude de combate (anti-Tact)
+			ShamblesThreshold = 25,     -- Distância de correção de teleporte
 			AutoStartRaid     = true,
-			UseCyborgSkills   = true,   -- rotacao Z/X/C/V da Cyborg no Law/Factory
+			UseCyborgSkills   = true,   -- Ativa rotação de skills da Cyborg
 		},
 	},
 
-	-- ─── Notificações ─────────────────────────────────────
+	-- ─── [8] UI & NOTIFICAÇÕES ─────────────────────────────
 	Notifications = {
-		Duration     = 5,
-		MaxVisible   = 4,
-		SlideInTime  = 0.3,
-		SlideOutTime = 0.25,
+		Duration     = 5,            -- Tempo de exibição das mensagens
+		MaxVisible   = 4,            -- Limite de notificações simultâneas
+		SlideInTime  = 0.3,          -- Animação de entrada
+		SlideOutTime = 0.25,         -- Animação de saída
 	},
 
+	-- ─── [9] PERFORMANCE & MEMÓRIA ─────────────────────────
+	Performance = {
+		CleanupInterval = 30,        -- Segundos entre limpezas de memória
+		MaxMemoryUsage = 500,        -- MB para disparar coletor de lixo (GC)
+		UpdateRate      = 0.1,       -- Taxa de atualização do sistema de controle
+	}
 }

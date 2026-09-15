@@ -1,9 +1,6 @@
 -- ============================================================
---  Elite Automation Framework :: Systems.BossManager
---  Gerenciador de Bosses e Sea Events do Grand Piece Online (GPO):
---  1. Sea Events / Location Bosses (Kraken, Sea Beast, Ghost Ship, Megalodon)
---  2. Timed / World Bosses (Ryuma, Borj, Gravito, Enel, Neptune)
---  3. Raid Bosses (Moria, Ba'al, Impel Down Warden)
+--  Elite Automation Framework :: BossManager v2.1
+--  Gerenciador de Inteligência de Combate e Eventos de Mundo
 -- ============================================================
 
 local Players    = game:GetService("Players")
@@ -16,405 +13,213 @@ local Logger     = require(Root.Core.Logger)
 local BossManager = {}
 BossManager.__index = BossManager
 
--- ─── Índice único por scan: 1x GetDescendants em vez de 30x FindFirstChild(true) ─
-local function buildModelIndex()
-	local index = {}
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("Model") then
-			local key = obj.Name:lower()
-			if not index[key] then
-				if obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("Humanoid") then
-					index[key] = obj
-				end
-			end
-		end
-	end
-	return index
+-- ─── [1] CONSTANTES E UTILITÁRIOS ───────────────────────────
+
+local function getValidRoot(model)
+    if not model then return nil end
+    return model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildOfClass("BasePart")
 end
 
--- ─── Utilitário: encontra modelo no workspace por nome ou aliases ─
-local function findBossModel(config, index)
-	if not config then return nil end
+-- ─── [2] CONSTRUTOR ──────────────────────────────────────────
 
-	-- Lista de nomes a testar
-	local names = { config.Name }
-	if config.Aliases then
-		for _, alias in ipairs(config.Aliases) do
-			table.insert(names, alias)
-		end
-	end
-
-	for _, name in ipairs(names) do
-		local m
-		if index then
-			m = index[name:lower()]
-		else
-			m = workspace:FindFirstChild(name, true) or workspace:FindFirstChild(name)
-		end
-		if m and (m:FindFirstChild("HumanoidRootPart") or m:FindFirstChildOfClass("Humanoid")) then
-			return m
-		end
-	end
-
-	-- Busca parcial só com índice (sem índice: 1x GetChildren, sem scan recursivo extra)
-	if index then
-		local lowerName = config.Name:lower()
-		for key, obj in pairs(index) do
-			if key:find(lowerName, 1, true) then
-				return obj
-			end
-		end
-	else
-		local lowerName = config.Name:lower()
-		for _, obj in ipairs(workspace:GetChildren()) do
-			if obj:IsA("Model") then
-				local objLower = obj.Name:lower()
-				if objLower:find(lowerName, 1, true) then
-					if obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("Humanoid") then
-						return obj
-					end
-				end
-			end
-		end
-	end
-
-	return nil
-end
-
--- ─── Utilitário: jitter simples ──────────────────────────────
-local function jitter(min, max)
-	return min + math.random() * (max - min)
-end
-
--- ─── Construtor ──────────────────────────────────────────────
 function BossManager.new(combat, smartFlight, notifications, settings)
-	local self = setmetatable({}, BossManager)
+    local self = setmetatable({}, BossManager)
 
-	self.Combat        = combat        -- CombatController
-	self.SmartFlight   = smartFlight   -- SmartFlight
-	self.Notifications = notifications
-	self.Settings      = settings or {}
-	self.ScanInterval  = self.Settings.ScanInterval or 2.0
-	self.AttackRadius  = self.Settings.AttackRadius or 90
+    self.Combat        = combat        -- CombatController
+    self.SmartFlight   = smartFlight   -- SmartFlight
+    self.Notifications = notifications
+    self.Settings      = settings or {}
+    self.ScanInterval  = self.Settings.ScanInterval or 2.0
+    self.AttackRadius  = self.Settings.AttackRadius or 90
 
-	-- Timestamps de último spawn visto para bosses de tempo
-	self._timedTimestamps = {}     -- [bossName] = os.time() do último spawn
-	self._running         = false
-	self._thread          = nil
-	self._currentBoss     = nil    -- boss atualmente sendo farmado
+    self._timedTimestamps = {}     -- [bossName] = os.time()
+    self._running         = false
+    self._thread          = nil
+    self._currentBoss     = nil    -- Boss alvo atual
+    self._activeTasks     = {}     -- Gerenciamento de threads de combate
 
-	return self
+    return self
 end
 
--- ─════════════════════════════════════════════════════════════
---   CATEGORIA 1 — RAID / DUNGEON BOSSES (Moria, Ba'al, Impel Down)
--- ══════════════════════════════════════════════════════════════
+-- ─── [3] MOTOR DE BUSCA (Otimizado) ─────────────────────────
 
-function BossManager:_handleRaidBoss(config, index)
-	Logger.Info("BossManager → Verificando Raid Boss:", config.Name)
+function BossManager:_findBoss(config)
+    if not config then return nil end
 
-	local bossModel = findBossModel(config, index)
-	if not bossModel then
-		-- Se houver localização definida e não estiver engajado, vai até lá
-		if config.Location and self.SmartFlight and not self._currentBoss then
-			Logger.Info("Raid Boss não avistado. Posicionando em:", tostring(config.Location))
-			self.SmartFlight:FlyTo(config.Location)
-		end
-		return
-	end
+    local names = {config.Name}
+    if config.Aliases then
+        for _, v in ipairs(config.Aliases) do table.insert(names, v) end
+    end
 
-	Logger.Success("Raid Boss detectado:", config.Name, "| Fases:", config.PhaseCount or 1)
-
-	-- Notifica UI
-	if self.Notifications then
-		local localPlayer = Players.LocalPlayer
-		if localPlayer and localPlayer.PlayerGui then
-			self.Notifications.Create(
-				localPlayer.PlayerGui,
-				"⚔ GPO RAID BOSS",
-				config.Name .. " detectado! Engajando...",
-				5,
-				Color3.fromRGB(255, 75, 75)
-			)
-		end
-	end
-
-	self._currentBoss = bossModel
-
-	-- Loop de combate
-	for phase = 1, (config.PhaseCount or 1) do
-		Logger.Info(string.format("  Fase %d/%d", phase, config.PhaseCount or 1))
-
-		local bossRoot = bossModel:FindFirstChild("HumanoidRootPart")
-		if bossRoot and self.SmartFlight then
-			self.SmartFlight:FlyTo(bossRoot.Position)
-		end
-
-		if self.Combat then
-			self.Combat:SetTarget(bossModel)
-		end
-
-		local timeout = os.clock() + 300
-		while os.clock() < timeout do
-			local hum = bossModel:FindFirstChildOfClass("Humanoid")
-			if not hum or hum.Health <= 0 or not bossModel.Parent then
-				Logger.Info("Boss eliminado na fase", phase)
-				break
-			end
-			task.wait(1)
-		end
-
-		if phase < (config.PhaseCount or 1) then
-			task.wait(jitter(2, 4))
-		end
-	end
-
-	self._currentBoss = nil
-	if self.Combat then
-		self.Combat:ClearTarget()
-	end
-
-	Logger.Success("Raid Boss", config.Name, "finalizado!")
+    for _, name in ipairs(names) do
+        -- Busca rápida no Workspace (Busca por nome com prefixo/sufixo)
+        local model = workspace:FindFirstChild(name, true) 
+        if model and model:IsA("Model") then
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                return model
+            end
+        end
+    end
+    return nil
 end
 
--- ─════════════════════════════════════════════════════════════
---   CATEGORIA 2 — BOSSES DE TEMPO E ILHAS (Ryuma, Borj, Gravito, Enel, Neptune)
--- ══════════════════════════════════════════════════════════════
+-- ─── [4] LÓGICA DE COMBATE E EVENTOS ────────────────────────
 
-function BossManager:_handleTimedBoss(config, index)
-	local name     = config.Name
-	local cooldown = config.CooldownSecs or 1800
-	local lastSeen = self._timedTimestamps[name] or 0
-	local now      = os.time()
-	local elapsed  = now - lastSeen
-	local remaining = cooldown - elapsed
+-- Gerencia o combate contra Bosses de Raid/Dungeon
+function BossManager:_handleRaidBoss(config)
+    Logger.Info("Raid Boss: Analisando " .. config.Name)
+    
+    local bossModel = self:_findBoss(config)
+    if not bossModel then return end
 
-	if remaining > 0 then
-		Logger.Debug(string.format(
-			"Timed Boss '%s' em cooldown. Próximo em: %d min %d s",
-			name,
-			math.floor(remaining / 60),
-			remaining % 60
-		))
-		return
-	end
+    self._currentBoss = bossModel
+    
+    -- Notificação de Engajamento
+    if self.Notifications then
+        self.Notifications.Create(Players.LocalPlayer.PlayerGui, "⚔ RAID DETECTADA", 
+            "Engajando: " .. config.Name, 5, Color3.fromRGB(255, 75, 75))
+    end
 
-	Logger.Info("BossManager → Verificando World Boss:", name)
-	local bossModel = findBossModel(config, index)
+    -- Loop de Combate da Raid
+    while self._running and self._currentBoss == bossModel do
+        local hum = bossModel:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 or not bossModel.Parent then break end
 
-	if not bossModel then
-		return
-	end
+        -- 1. Posicionamento Seguro (FlyTo)
+        local bossRoot = getValidRoot(bossModel)
+        if bossRoot and self.SmartFlight then
+            self.SmartFlight:FlyTo(bossRoot.Position)
+        end
 
-	Logger.Success("World Boss VIVO:", name)
-	self._timedTimestamps[name] = now
+        -- 2. Ativação do CombatController
+        if self.Combat then
+            self.Combat:SetTarget(bossModel)
+        end
 
-	if self.Notifications then
-		local localPlayer = Players.LocalPlayer
-		if localPlayer and localPlayer.PlayerGui then
-			self.Notifications.Create(
-				localPlayer.PlayerGui,
-				"⏱ GPO WORLD BOSS",
-				name .. " spawnado em " .. (config.Island or "ilha") .. "!",
-				6,
-				Color3.fromRGB(255, 200, 0)
-			)
-		end
-	end
+        task.wait(1)
+    end
 
-	if self.SmartFlight and config.Location then
-		if config.FlyToSky then
-			local skyPos = Vector3.new(
-				config.Location.X,
-				math.max(config.Location.Y, 200),
-				config.Location.Z
-			)
-			self.SmartFlight:FlyTo(skyPos)
-		else
-			self.SmartFlight:FlyTo(config.Location)
-		end
-	end
-
-	self._currentBoss = bossModel
-	if self.Combat then
-		self.Combat:SetTarget(bossModel)
-	end
-
-	local timeout = os.clock() + 600
-	while os.clock() < timeout do
-		local hum = bossModel:FindFirstChildOfClass("Humanoid")
-		if not hum or hum.Health <= 0 or not bossModel.Parent then
-			break
-		end
-		task.wait(1)
-	end
-
-	self._currentBoss = nil
-	Logger.Success("World Boss", name, "eliminado!")
+    self._currentBoss = nil
+    Logger.Success("Raid Boss " .. config.Name .. " derrotado ou sumiu.")
 end
 
--- ─════════════════════════════════════════════════════════════
---   CATEGORIA 3 — SEA EVENTS & BOSSES DE MAR (Kraken, Sea Beast, Ghost Ship, Megalodon)
--- ══════════════════════════════════════════════════════════════
+-- Gerencia Bosses de Mundo e Eventos de Mar
+function BossManager:_handleWorldBoss(config)
+    local name = config.Name
+    local lastSeen = self._timedTimestamps[name] or 0
+    
+    -- Verifica Cooldown
+    if os.clock() - lastSeen < (config.CooldownSecs or 1800) then return end
 
-function BossManager:_handleLocationBoss(config, index)
-	local bossModel = findBossModel(config, index)
-	if not bossModel then return end
+    local bossModel = self:_findBoss(config)
+    if not bossModel then return end
 
-	local bossRoot = bossModel:FindFirstChild("HumanoidRootPart")
-		or bossModel:FindFirstChildOfClass("BasePart")
-	if not bossRoot then return end
+    -- Validação de Região (Para Sea Events)
+    if config.Region then
+        local bossRoot = getValidRoot(bossModel)
+        if bossRoot then
+            local dist = (bossRoot.Position - config.Region.center).Magnitude
+            if dist > config.Region.radius then return end
+        end
+    end
 
-	local bossPos = bossRoot.Position
+    self._currentBoss = bossModel
+    self._timedTimestamps[name] = os.clock()
 
-	-- Região de validade
-	local region = config.Region
-	if region then
-		local dist = (Vector3.new(bossPos.X, 0, bossPos.Z)
-			- Vector3.new(region.center.X, 0, region.center.Z)).Magnitude
-		if dist > region.radius then
-			return
-		end
-	end
+    Logger.Success("🌍 EVENTO DETECTADO: " .. name)
 
-	Logger.Success("🌊 SEA EVENT DETECTADO:", bossModel.Name, "em", tostring(bossPos))
+    -- Notificação de Spawn
+    if self.Notifications then
+        self.Notifications.Create(Players.LocalPlayer.PlayerGui, "🌊 EVENTO DE MUNDO", 
+            "Boss: " .. name .. " detectado!", 6, Color3.fromRGB(0, 180, 255))
+    end
 
-	if self.Notifications then
-		local localPlayer = Players.LocalPlayer
-		if localPlayer and localPlayer.PlayerGui then
-			self.Notifications.Create(
-				localPlayer.PlayerGui,
-				"🌊 GPO SEA EVENT",
-				bossModel.Name .. " surgiu no mar!\nAltitude de segurança ativada.",
-				6,
-				Color3.fromRGB(0, 180, 255)
-			)
-		end
-	end
+    -- Loop de Combate do World Boss
+    while self._running and self._currentBoss == bossModel do
+        local hum = bossModel:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 or not bossModel.Parent then break end
 
-	self._currentBoss = bossModel
+        -- Mantém altitude de segurança (Anti-Mar)
+        local targetPos = bossModel.PrimaryPart and bossModel.PrimaryPart.Position or bossModel:GetPivot().Position
+        if config.SafeAltitude then
+            targetPos = Vector3.new(targetPos.X, config.SafeAltitude, targetPos.Z)
+        end
 
-	-- "Voo de Segurança Anti-Mar" — mantém altitude acima da água
-	if self.SmartFlight and config.SafeAltitude then
-		local oldHover = self.SmartFlight.HoverOffset
-		self.SmartFlight.HoverOffset = config.SafeAltitude
+        -- Movimentação e Combate
+        if self.SmartFlight then
+            self.SmartFlight:FlyTo(targetPos)
+        end
 
-		-- Garante proteção estrita contra contato com água
-		local antiDrownThread = task.spawn(function()
-			while self._currentBoss and self._currentBoss.Parent do
-				if config.DiveProtection then
-					local localChar = Players.LocalPlayer.Character
-					local root      = localChar and localChar:FindFirstChild("HumanoidRootPart")
-					if root then
-						local seaLevel = config.SeaLevel or 0
-						if root.Position.Y < (seaLevel + config.SafeAltitude) then
-							Logger.Warn("Anti-afogamento GPO ativado! Mantendo sobre o mar.")
-							if self.SmartFlight then
-								self.SmartFlight:FlyTo(Vector3.new(
-									root.Position.X,
-									seaLevel + config.SafeAltitude + 5,
-									root.Position.Z
-								))
-							end
-						end
-					end
-				end
-				task.wait(0.15)
-			end
-		end)
+        if self.Combat then
+            self.Combat:SetTarget(bossModel)
+        end
 
-		-- Voa até o boss no plano horizontal mantendo safe altitude
-		local safePos = Vector3.new(bossPos.X, (config.SeaLevel or 0) + config.SafeAltitude, bossPos.Z)
-		self.SmartFlight:FlyTo(safePos)
+        task.wait(1)
+    end
 
-		-- Engaja combate
-		if self.Combat then
-			self.Combat:SetTarget(bossModel)
-		end
-
-		-- Aguarda desfecho
-		local timeout = os.clock() + 600
-		while os.clock() < timeout do
-			local hum = bossModel:FindFirstChildOfClass("Humanoid")
-			if not hum or hum.Health <= 0 or not bossModel.Parent then
-				break
-			end
-			task.wait(1)
-		end
-
-		pcall(function() task.cancel(antiDrownThread) end)
-		self.SmartFlight.HoverOffset = oldHover
-	end
-
-	self._currentBoss = nil
-	Logger.Success("Sea Event", bossModel.Name, "concluído!")
+    self._currentBoss = nil
 end
 
--- ─════════════════════════════════════════════════════════════
---   LOOP PRINCIPAL
--- ══════════════════════════════════════════════════════════════
+-- ─── [5] LOOP PRINCIPAL ─────────────────────────────────────
 
 function BossManager:_loop()
-	local cfg = self.Settings
+    while self._running do
+        local ok, err = pcall(function()
+            -- 1. Prioridade Máxima: Sea Events (Kraken, Sea Beast, etc)
+            if self.Settings.LocationBosses then
+                for _, bossCfg in pairs(self.Settings.LocationBosses) do
+                    if not self._running then break end
+                    self:_handleWorldBoss(bossCfg)
+                end
+            end
 
-	while self._running do
-		local ok, err = pcall(function()
-			local index = buildModelIndex()
+            -- 2. Prioridade Média: Timed Bosses (Mundo/Ilhas)
+            if self.Settings.TimedBosses then
+                for _, bossCfg in pairs(self.Settings.TimedBosses) do
+                    if not self._running then break end
+                    self:_handleWorldBoss(bossCfg)
+                end
+            end
 
-			-- ── 1. Sea Events / Location Bosses (Prioridade máxima em GPO)
-			if cfg.LocationBosses then
-				for _, bossCfg in pairs(cfg.LocationBosses) do
-					if not self._running then break end
-					self:_handleLocationBoss(bossCfg, index)
-				end
-			end
+            -- 3. Prioridade de Raid (Dungeons)
+            if self.Settings.RaidBosses then
+                for _, raidCfg in pairs(self.Settings.RaidBosses) do
+                    if not self._running then break end
+                    self:_handleRaidBoss(raidCfg)
+                end
+            end
+        end)
 
-			-- ── 2. Bosses de Tempo e Ilhas
-			if cfg.TimedBosses then
-				for _, bossCfg in pairs(cfg.TimedBosses) do
-					if not self._running then break end
-					self:_handleTimedBoss(bossCfg, index)
-				end
-			end
+        if not ok then
+            Logger.Error("BossManager Loop Error: " .. tostring(err))
+        end
 
-			-- ── 3. Raids e Dungeons
-			if cfg.RaidBosses then
-				for _, bossCfg in pairs(cfg.RaidBosses) do
-					if not self._running then break end
-					self:_handleRaidBoss(bossCfg, index)
-				end
-			end
-
-		end)
-
-		if not ok then
-			Logger.Error("BossManager loop error:", err)
-		end
-
-		task.wait(self.ScanInterval)
-	end
+        task.wait(self.ScanInterval)
+    end
 end
 
--- ─── API Pública ─────────────────────────────────────────────
+-- ─── [6] API PÚBLICA ─────────────────────────────────────────
+
 function BossManager:Start()
-	if self._running then return end
-	self._running = true
-	self._thread  = task.spawn(function() self:_loop() end)
-	Logger.Info("BossManager (GPO) iniciado.")
+    if self._running then return end
+    self._running = true
+    self._thread = task.spawn(function() self:_loop() end)
+    Logger.Info("BossManager iniciado com sucesso.")
 end
 
 function BossManager:Stop()
-	self._running = false
-	if self._thread then
-		task.cancel(self._thread)
-		self._thread = nil
-	end
-	self._currentBoss = nil
-	Logger.Info("BossManager parado.")
+    self._running = false
+    if self._thread then
+        task.cancel(self._thread)
+        self._thread = nil
+    end
+    self._currentBoss = nil
+    Logger.Info("BossManager parado.")
 end
 
 function BossManager:GetCurrentBoss()
-	return self._currentBoss
+    return self._currentBoss
 end
 
 return BossManager

@@ -1,19 +1,20 @@
 -- ============================================================
 --  Elite Automation Framework :: Systems.QuestManager
---  Auto-Quest system para GPO com priorização inteligente.
+--  Arquitetura de Progressão e Automação de Missões
 -- ============================================================
 
-local Players = game:GetService("Players")
+local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Root = ReplicatedStorage:WaitForChild("EliteAutomation")
-local Logger = require(Root.Core.Logger)
+local Root       = ReplicatedStorage:WaitForChild("EliteAutomation")
+local Logger     = require(Root.Core.Logger)
 
 local QuestManager = {}
 QuestManager.__index = QuestManager
 
--- ─── Quest database GPO ───────────────────────────────────────
+-- ─── [1] DATABASE DE QUESTS (Otimizada) ──────────────────────
+
 local QUESTS = {
 	-- First Sea
 	{
@@ -63,28 +64,32 @@ local QUESTS = {
 	},
 }
 
+-- ─── [2] CONSTRUTOR ──────────────────────────────────────────
+
 function QuestManager.new(combat, smartFlight, notifications, settings)
 	local self = setmetatable({}, QuestManager)
 
-	self.Combat = combat
-	self.SmartFlight = smartFlight
+	self.Combat        = combat
+	self.SmartFlight   = smartFlight
 	self.Notifications = notifications
-	self.Settings = settings or {}
+	self.Settings      = settings or {}
 
-	self._running = false
-	self._thread = nil
-	self._currentQuest = nil
-	self._questProgress = 0
+	self._running        = false
+	self._thread         = nil
+	self._currentQuest   = nil
+	self._questProgress  = 0
+	self._lastQuestTime  = 0
 
 	return self
 end
 
--- ─── Detecta nível do player ──────────────────────────────────
+-- ─── [3] LÓGICA DE DECISÃO (Inteligência de Nível) ──────────
+
+-- Verifica o nível atual do jogador (com fallback de segurança)
 function QuestManager:_getPlayerLevel()
 	local lp = Players.LocalPlayer
 	if not lp then return 1 end
 
-	-- GPO armazena level em leaderstats ou PlayerData
 	local leaderstats = lp:FindFirstChild("leaderstats")
 	if leaderstats then
 		local lvl = leaderstats:FindFirstChild("Level") or leaderstats:FindFirstChild("level")
@@ -93,7 +98,6 @@ function QuestManager:_getPlayerLevel()
 		end
 	end
 
-	-- Fallback: Character Attribute
 	local char = lp.Character
 	if char then
 		local level = char:GetAttribute("Level")
@@ -103,16 +107,16 @@ function QuestManager:_getPlayerLevel()
 	return 1
 end
 
--- ─── Seleciona melhor quest baseado em nível ─────────────────
+-- Seleciona a melhor quest baseada em Score de Eficiência (Exp/Dificuldade)
 function QuestManager:_selectBestQuest()
 	local playerLevel = self:_getPlayerLevel()
 	local best = nil
 	local bestScore = -math.huge
 
 	for _, quest in ipairs(QUESTS) do
-		-- Ignora quests muito acima do nível
+		-- Filtro de Nível: Evita quests muito difíceis para o nível atual
 		if quest.Level <= (playerLevel + 10) then
-			-- Score = ExpReward / Dificuldade
+			-- Score = Recompensa de XP / (Nível da Quest + Contagem de Inimigos)
 			local difficulty = math.max(1, quest.Level - playerLevel + quest.Count * 0.5)
 			local score = quest.ExpReward / difficulty
 
@@ -126,55 +130,55 @@ function QuestManager:_selectBestQuest()
 	return best
 end
 
--- ─── Aceita quest no NPC ──────────────────────────────────────
-function QuestManager:_acceptQuest(quest)
-	Logger.Info("Aceitando quest:", quest.Name)
+-- ─── [4] EXECUÇÃO DE AÇÕES (Interação e Combate) ────────────
 
-	-- Voa até o NPC
-	if self.SmartFlight and quest.Location then
+-- Gerencia a aceitação da quest no NPC
+function QuestManager:_acceptQuest(quest)
+	Logger.Info("Aceitando Quest: " .. quest.Name)
+
+	-- 1. Deslocamento para o NPC
+	if self.SmartFlight then
 		self.SmartFlight:FlyTo(quest.Location)
+		task.wait(1.5) -- Delay de estabilização de voo
 	end
 
-	task.wait(0.5)
-
-	-- Procura NPC no workspace
+	-- 2. Busca do NPC no Workspace
 	local npc = workspace:FindFirstChild(quest.NPC, true)
 	if not npc then
-		Logger.Warn("NPC não encontrado:", quest.NPC)
+		Logger.Warn("NPC não encontrado: " .. quest.NPC)
 		return false
 	end
 
-	-- Tenta clicar no NPC (ProximityPrompt ou ClickDetector)
+	-- 3. Interação (ProximityPrompt ou ClickDetector)
 	local prompt = npc:FindFirstChildOfClass("ProximityPrompt", true)
 	if prompt and fireproximityprompt then
 		fireproximityprompt(prompt)
-		task.wait(0.3)
+		task.wait(0.5)
 	end
 
 	local detector = npc:FindFirstChildOfClass("ClickDetector", true)
 	if detector and fireclickdetector then
 		fireclickdetector(detector)
-		task.wait(0.3)
+		task.wait(0.5)
 	end
 
-	Logger.Success("Quest aceita:", quest.Name)
+	Logger.Success("Quest aceita: " .. quest.Name)
 	return true
 end
 
--- ─── Farm inimigos da quest ───────────────────────────────────
+-- Gerencia o combate contra os inimigos da quest
 function QuestManager:_farmEnemies(quest)
-	Logger.Info("Farmando inimigos:", table.concat(quest.Enemies, ", "))
-
+	Logger.Info("Iniciando Farm: " .. quest.Name)
 	local killed = 0
-	local timeout = os.clock() + 300  -- 5 min max
+	local timeout = os.clock() + 300 -- Timeout de 5 minutos por quest
 
 	while self._running and killed < quest.Count and os.clock() < timeout do
 		local target = nil
-
-		-- Procura inimigo da quest
+		
+		-- Busca o inimigo mais próximo da lista de inimigos da quest
 		for _, enemyName in ipairs(quest.Enemies) do
 			local enemy = workspace:FindFirstChild(enemyName, true)
-			if enemy then
+			if enemy and enemy:IsA("Model") then
 				local hum = enemy:FindFirstChildOfClass("Humanoid")
 				if hum and hum.Health > 0 then
 					target = enemy
@@ -184,27 +188,26 @@ function QuestManager:_farmEnemies(quest)
 		end
 
 		if target then
-			-- Engaja combate
-			local root = target:FindFirstChild("HumanoidRootPart")
-			if root and self.SmartFlight then
-				self.SmartFlight:FlyTo(root.Position)
+			-- 1. Posicionamento e Combate
+			if self.SmartFlight then
+				self.SmartFlight:FlyTo(target.PrimaryPart and target.PrimaryPart.Position or target.GetPivot().Position)
 			end
 
 			if self.Combat then
 				self.Combat:SetTarget(target)
 			end
 
-			-- Aguarda morte
+			-- 2. Monitoramento de Morte
 			local hum = target:FindFirstChildOfClass("Humanoid")
-			while hum and hum.Health > 0 and target.Parent do
-				task.wait(0.2)
+			while hum and hum.Health > 0 and target.Parent and self._running do
+				task.wait(0.5)
 			end
 
-			killed = killed + 1
+			killed += 1
 			self._questProgress = killed / quest.Count
-			Logger.Info(string.format("Progresso: %d/%d", killed, quest.Count))
+			Logger.Info(string.format("Progresso de %s: %d/%d", quest.Name, killed, quest.Count))
 		else
-			-- Nenhum inimigo encontrado, aguarda respawn
+			-- Aguarda respawn do inimigo
 			task.wait(2)
 		end
 	end
@@ -212,14 +215,15 @@ function QuestManager:_farmEnemies(quest)
 	return killed >= quest.Count
 end
 
--- ─── Loop principal ───────────────────────────────────────────
+-- ─── [5] LOOP PRINCIPAL (Thread de Execução) ─────────────────
+
 function QuestManager:_loop()
 	while self._running do
 		local ok, err = pcall(function()
-			-- Seleciona melhor quest
+			-- 1. Seleção da Próxima Quest
 			local quest = self:_selectBestQuest()
 			if not quest then
-				Logger.Warn("Nenhuma quest disponível para o nível atual")
+				Logger.Warn("Nenhuma quest viável para o nível atual.")
 				task.wait(10)
 				return
 			end
@@ -227,44 +231,28 @@ function QuestManager:_loop()
 			self._currentQuest = quest
 			self._questProgress = 0
 
-			-- Aceita quest
+			-- 2. Processo de Aceitação
 			local accepted = self:_acceptQuest(quest)
 			if not accepted then
 				task.wait(5)
 				return
 			end
 
-			-- Notifica UI
+			-- 3. Notificação de Início
 			if self.Notifications then
-				local lp = Players.LocalPlayer
-				if lp and lp.PlayerGui then
-					self.Notifications.Create(
-						lp.PlayerGui,
-						"📜 QUEST INICIADA",
-						quest.Name .. " - " .. quest.Island,
-						4,
-						Color3.fromRGB(100, 200, 255)
-					)
-				end
+				self.Notifications.Create(Players.LocalPlayer.PlayerGui, "📜 QUEST INICIADA", 
+					quest.Name .. " [" .. quest.Island .. "]", 4, Color3.fromRGB(100, 200, 255))
 			end
 
-			-- Farm inimigos
+			-- 4. Fase de Farm
 			local completed = self:_farmEnemies(quest)
 
+			-- 5. Finalização e Recompensa
 			if completed then
-				Logger.Success("Quest completada:", quest.Name, "| +", quest.ExpReward, "EXP")
-
+				Logger.Success(string.format("Quest Completa: %s! (+%d EXP)", quest.Name, quest.ExpReward))
 				if self.Notifications then
-					local lp = Players.LocalPlayer
-					if lp and lp.PlayerGui then
-						self.Notifications.Create(
-							lp.PlayerGui,
-							"✅ QUEST COMPLETA",
-							string.format("+%d EXP | +%d Peli", quest.ExpReward, quest.PeliReward),
-							5,
-							Color3.fromRGB(80, 220, 130)
-						)
-					end
+					self.Notifications.Create(Players.LocalPlayer.PlayerGui, "✅ QUEST COMPLETA", 
+						quest.Name .. " finalizada!", 5, Color3.fromRGB(80, 220, 130))
 				end
 			end
 
@@ -273,14 +261,15 @@ function QuestManager:_loop()
 		end)
 
 		if not ok then
-			Logger.Error("QuestManager loop error:", err)
+			Logger.Error("QuestManager Loop Error: " .. tostring(err))
 		end
 
 		task.wait(1)
 	end
 end
 
--- ─── API Pública ──────────────────────────────────────────────
+-- ─── [6] API PÚBLICA ──────────────────────────────────────────
+
 function QuestManager:Start()
 	if self._running then return end
 	self._running = true
@@ -299,11 +288,11 @@ function QuestManager:Stop()
 end
 
 function QuestManager:GetCurrentQuest()
-	return self._currentQuest
+    return self._currentQuest
 end
 
 function QuestManager:GetProgress()
-	return self._questProgress
+    return self._questProgress
 end
 
 return QuestManager

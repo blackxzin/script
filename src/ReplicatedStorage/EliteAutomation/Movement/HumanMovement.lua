@@ -1,7 +1,6 @@
 -- ============================================================
 --  Elite Automation Framework :: Movement.HumanMovement
---  Movimento humanizado com Perlin noise e delays naturais.
---  Anti-detecção avançada para GPO.
+--  Arquitetura de Movimento Orgânico e Anti-Detecção Avançada
 -- ============================================================
 
 local TweenService = game:GetService("TweenService")
@@ -9,98 +8,116 @@ local RunService = game:GetService("RunService")
 
 local HumanMovement = {}
 
--- ─── Perlin noise 1D simplificado ────────────────────────────
-local function perlin1D(x, seed)
-	seed = seed or 0
-	x = x + seed * 1000
-	local xi = math.floor(x)
-	local xf = x - xi
-
-	local fade = xf * xf * (3 - 2 * xf)
-
-	local a = math.sin(xi * 12.9898 + 78.233) * 43758.5453
-	local b = math.sin((xi + 1) * 12.9898 + 78.233) * 43758.5453
-	a = a - math.floor(a)
-	b = b - math.floor(b)
-
-	return a + fade * (b - a)
+-- ─── [1] MATEMÁTICA DE DISTRIBUIÇÃO (Gaussian/Normal) ─────────
+-- Simula o erro humano usando a Transformação de Box-Muller
+local function getGaussianRandom(mean, stdDev)
+    local u1 = math.random()
+    local u2 = math.random()
+    local z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
+    return z0 * stdDev + mean
 end
 
--- ─── Gera delay humanizado (baseado em distribuição normal) ──
+-- ─── [2] PERLIN NOISE (Movimento Fluido) ─────────────────────
+-- Gera uma variação suave e contínua, evitando "saltos" de velocidade
+local function getPerlinNoise(t, seed, frequency, amplitude)
+    seed = seed or 42
+    local noise = math.noise(t * frequency, seed, t * frequency * 0.5)
+    return noise * amplitude
+end
+
+-- ─── [3] DELAY HUMANIZADO ────────────────────────────────────
+-- Implementa tempos de reação que variam de forma natural
 function HumanMovement.HumanDelay(base, variance)
-	base = base or 0.15
-	variance = variance or 0.05
-
-	-- Box-Muller transform para distribuição normal
-	local u1 = math.random()
-	local u2 = math.random()
-	local z = math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
-
-	local delay = base + z * variance
-	return math.max(0.05, math.min(delay, base + variance * 3))
+    base = base or 0.15
+    variance = variance or 0.05
+    
+    -- O delay não é apenas aleatório, ele tem uma média (mean)
+    local delay = getGaussianRandom(base, variance)
+    return math.max(0.05, delay)
 end
 
--- ─── Velocity com Perlin noise (movimento orgânico) ──────────
+-- ─── [4] VELOCIDADE ORGÂNICA (Perlin Velocity) ───────────────
+-- Em vez de uma velocidade constante, usamos uma curva de aceleração
 function HumanMovement.PerlinVelocity(baseSpeed, time, seed)
-	baseSpeed = baseSpeed or 50
-	time = time or os.clock()
-	seed = seed or 42
-
-	local noise = perlin1D(time * 0.5, seed)
-	local variance = noise * 8  -- ±8 studs/s
-
-	return math.max(20, baseSpeed + variance)
+    local frequency = 0.5
+    local amplitude = baseSpeed * 0.15 -- 15% de variação de velocidade
+    
+    local noise = getPerlinNoise(time, seed or 1, frequency, amplitude)
+    return math.max(baseSpeed * 0.8, baseSpeed + noise)
 end
 
--- ─── Path com micro-desvios (evita linha reta perfeita) ──────
-function HumanMovement.OrganicPath(start, finish, segments)
-	segments = segments or 5
-	local path = { start }
+-- ─── [5] TRAJETÓRIA ORGÂNICA (Anti-Line Path) ────────────────
+-- Cria um caminho com desvios laterais para evitar o "vôo em linha reta"
+function HumanMovement.OrganicPath(startPos, finishPos, segments)
+    segments = segments or 6
+    local path = { startPos }
+    local direction = (finishPos - startPos).Unit
+    local distance = (finishPos - startPos).Magnitude
+    
+    -- Vetor perpendicular para criar o desvio lateral
+    local upVector = Vector3.new(0, 1, 0)
+    local sideVector = direction:Cross(upVector).Unit
+    if sideVector.Magnitude < 0.1 then sideVector = Vector3.new(1, 0, 0) end
 
-	local direction = (finish - start).Unit
-	local distance = (finish - start).Magnitude
-	local step = distance / segments
+    for i = 1, segments - 1 do
+        local progress = i / segments
+        local basePoint = startPos:Lerp(finishPos, progress)
+        
+        -- Adiciona um desvio lateral usando Perlin Noise para suavidade
+        local deviation = getPerlinNoise(progress * 5, i, 0.5, 3) 
+        local lateralOffset = sideVector * deviation
+        
+        -- Adiciona um pequeno desvio de altura (Y) para não ser perfeitamente plano
+        local verticalOffset = math.sin(progress * math.pi) * 2 
+        
+        table.insert(path, basePoint + lateralOffset + Vector3.new(0, verticalOffset, 0))
+    end
 
-	for i = 1, segments - 1 do
-		local progress = i / segments
-		local basePoint = start:Lerp(finish, progress)
-
-		-- Adiciona desvio perpendicular pequeno
-		local perpendicular = Vector3.new(-direction.Z, 0, direction.X)
-		local offset = perpendicular * (perlin1D(progress * 10, i) - 0.5) * 4
-
-		table.insert(path, basePoint + offset)
-	end
-
-	table.insert(path, finish)
-	return path
+    table.insert(path, finishPos)
+    return path
 end
 
--- ─── Delay entre ações (input timing humanizado) ─────────────
+-- ─── [6] INPUT TIMING (Reação Humana) ────────────────────────
+-- Simula o tempo de clique e pressionamento de tecla
 function HumanMovement.InputDelay()
-	-- Humanos têm 150-300ms de reação típica
-	return HumanMovement.HumanDelay(0.22, 0.08)
+    -- Reação típica de 180ms a 320ms
+    return getGaussianRandom(0.25, 0.05)
 end
 
--- ─── Jitter de posição (anti-bot detection) ──────────────────
+-- ─── [7] JITTER DE POSIÇÃO (Anti-Bot Detection) ───────────────
+-- Adiciona micro-tremores na posição para evitar padrões estáticos
 function HumanMovement.AddJitter(position, radius)
-	radius = radius or 0.5
-	local rx = (math.random() - 0.5) * radius * 2
-	local ry = (math.random() - 0.5) * radius * 2
-	local rz = (math.random() - 0.5) * radius * 2
-	return position + Vector3.new(rx, ry, rz)
+    radius = radius or 0.5
+    local jitterX = getGaussianRandom(0, radius)
+    local jitterY = getGaussianRandom(0, radius)
+    local jitterZ = getGaussianRandom(0, radius)
+    
+    return position + Vector3.new(jitterX, jitterY, jitterZ)
 end
 
--- ─── Padrão de clique humanizado (não instantâneo) ───────────
+-- ─── [8] CLIQUE HUMANIZADO (Hold Time) ───────────────────────
+-- Simula o tempo que um humano mantém o botão pressionado
 function HumanMovement.HumanClick(callback)
-	-- Press down
-	task.spawn(callback, true)
+    -- Simula o pressionar (Down)
+    task.spawn(function()
+        callback(true)
+    end)
 
-	-- Hold time variável (50-150ms)
-	task.wait(HumanMovement.HumanDelay(0.08, 0.04))
+    -- Delay de pressão variável (Hold time)
+    local holdTime = getGaussianRandom(0.1, 0.04)
+    task.wait(holdTime)
 
-	-- Release
-	task.spawn(callback, false)
+    -- Simula o soltar (Up)
+    task.spawn(function()
+        callback(false)
+    end)
+end
+
+-- ─── [9] INTERPOLAÇÃO DE CURVA (Easing Helper) ───────────────
+-- Ajuda o SmartFlight a não dar saltos bruscos de velocidade
+function HumanMovement.GetSmoothStep(t)
+    -- Smoothstep formula: 3t^2 - 2t^3
+    return t * t * (3 - 2 * t)
 end
 
 return HumanMovement
