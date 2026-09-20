@@ -44,7 +44,7 @@ end
 -- ─── [3] MOTOR DE BUSCA (Otimizado) ─────────────────────────
 
 function BossManager:_findBoss(config)
-    if not config then return nil end
+    if not config or type(config.Name) ~= "string" or config.Name == "" then return nil end
 
     local names = {config.Name}
     if config.Aliases then
@@ -68,6 +68,11 @@ end
 
 -- Gerencia o combate contra Bosses de Raid/Dungeon
 function BossManager:_handleRaidBoss(config)
+    if not config or type(config.Name) ~= "string" or config.Name == "" then
+        Logger.Warn("Raid Boss ignorado: configuração sem Name.")
+        return
+    end
+
     Logger.Info("Raid Boss: Analisando " .. config.Name)
     
     local bossModel = self:_findBoss(config)
@@ -100,17 +105,24 @@ function BossManager:_handleRaidBoss(config)
         task.wait(1)
     end
 
+    if self.Combat then self.Combat:ClearTarget() end
     self._currentBoss = nil
     Logger.Success("Raid Boss " .. config.Name .. " derrotado ou sumiu.")
 end
 
 -- Gerencia Bosses de Mundo e Eventos de Mar
 function BossManager:_handleWorldBoss(config)
+    if not config or type(config.Name) ~= "string" or config.Name == "" then
+        Logger.Warn("World Boss ignorado: configuração sem Name.")
+        return
+    end
+
     local name = config.Name
     local lastSeen = self._timedTimestamps[name] or 0
     
     -- Verifica Cooldown
-    if os.clock() - lastSeen < (config.CooldownSecs or 1800) then return end
+    local cooldown = config.CooldownSecs or config.Cooldown or 1800
+    if os.clock() - lastSeen < cooldown then return end
 
     local bossModel = self:_findBoss(config)
     if not bossModel then return end
@@ -125,7 +137,6 @@ function BossManager:_handleWorldBoss(config)
     end
 
     self._currentBoss = bossModel
-    self._timedTimestamps[name] = os.clock()
 
     Logger.Success("🌍 EVENTO DETECTADO: " .. name)
 
@@ -158,6 +169,8 @@ function BossManager:_handleWorldBoss(config)
         task.wait(1)
     end
 
+    if self.Combat then self.Combat:ClearTarget() end
+    self._timedTimestamps[name] = os.clock()
     self._currentBoss = nil
 end
 
@@ -214,6 +227,7 @@ function BossManager:Stop()
         task.cancel(self._thread)
         self._thread = nil
     end
+    if self.Combat then self.Combat:ClearTarget() end
     self._currentBoss = nil
     Logger.Info("BossManager parado.")
 end

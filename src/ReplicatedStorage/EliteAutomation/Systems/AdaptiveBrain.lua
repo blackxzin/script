@@ -10,15 +10,27 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Root = ReplicatedStorage:WaitForChild("EliteAutomation")
 local Logger = require(Root.Core.Logger)
 
-local SEA_NAMES = { Kraken = true, ["Sea Beast"] = true, ["Ghost Ship"] = true, Megalodon = true }
-local LAW_NAMES = { Law = true, Order = true }
+local SEA_NAMES = {
+	Kraken = true,
+	["Sea Beast"] = true,
+	["Ghost Ship"] = true,
+	Megalodon = true,
+}
+local LAW_NAMES = {
+	Law = true,
+	Order = true,
+	["Trafalgar Law"] = true,
+	["Boss Order"] = true,
+}
 
 -- Presets por contexto (studs/s, segundos)
 local PRESET_SEA   = { Speed = 45, Hover = 40, AtkMin = 0.60, AtkMax = 1.10 }
 local PRESET_LAW   = { Speed = 52, Hover = 25, AtkMin = 0.40, AtkMax = 0.75 }
 local PRESET_WORLD = { Speed = 52, Hover = 25, AtkMin = 0.40, AtkMax = 0.75 }
 local PRESET_SAFE  = { Speed = 40, Hover = 40, AtkMin = 0.80, AtkMax = 1.20 } -- HP baixo
+local PRESET_STAM  = { Speed = 42, Hover = 30, AtkMin = 0.75, AtkMax = 1.10 } -- Stamina baixa
 local LOW_HP_PCT   = 0.30
+local LOW_STAM_PCT = 0.15
 
 local AdaptiveBrain = {}
 AdaptiveBrain.__index = AdaptiveBrain
@@ -54,13 +66,13 @@ function AdaptiveBrain:_snapshot()
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 
 	if hum then
-		snap.HpPct = hum.Health / math.max(hum.MaxHealth, 1)
+		snap.HpPct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
 	end
 	if char then
 		local stam = char:GetAttribute("Stamina") or 100
 		local maxStam = char:GetAttribute("MaxStamina") or 100
 		if type(stam) == "number" and type(maxStam) == "number" and maxStam > 0 then
-			snap.StamPct = stam / maxStam
+			snap.StamPct = math.clamp(stam / maxStam, 0, 1)
 		end
 	end
 
@@ -89,6 +101,8 @@ function AdaptiveBrain:_apply(snap)
 	local preset, label
 	if snap.HpPct <= LOW_HP_PCT then
 		preset, label = PRESET_SAFE, "Recuando (HP baixo)"
+	elseif snap.StamPct <= LOW_STAM_PCT then
+		preset, label = PRESET_STAM, "Recuperando stamina"
 	elseif snap.Kind == "Sea" then
 		preset, label = PRESET_SEA, "Mar: " .. (snap.BossName or "?")
 	elseif snap.Kind == "Law" then
@@ -161,6 +175,10 @@ function AdaptiveBrain:Stop()
 	self:_restore()
 	self:_report("Idle")
 	Logger.Info("AdaptiveBrain parado.")
+end
+
+function AdaptiveBrain:IsRunning()
+	return self._running
 end
 
 function AdaptiveBrain:GetStatus()

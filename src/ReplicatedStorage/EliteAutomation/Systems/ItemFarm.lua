@@ -145,7 +145,12 @@ function ItemFarm:_scan()
 	-- Scan otimizado: foca em objetos que fazem sentido
 	for _, obj in ipairs(workspace:GetChildren()) do
 		-- Se o objeto for muito grande, escaneia os descendentes (como baús dentro de modelos)
-		local targets = obj:IsA("Model") and obj:GetDescendants() or {obj}
+		local targets = {obj}
+		if obj:IsA("Model") then
+			for _, descendant in ipairs(obj:GetDescendants()) do
+				table.insert(targets, descendant)
+			end
+		end
 		
 		for _, item in ipairs(targets) do
 			if item:IsA("Model") or item:IsA("BasePart") then

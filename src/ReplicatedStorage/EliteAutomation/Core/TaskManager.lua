@@ -41,6 +41,8 @@ function TaskManager:SetEnabled(name, enabled)
 		t.Thread = task.spawn(function()
 			local ok, err = pcall(t.Start)
 			if not ok then
+				t.Enabled = false
+				t.Thread = nil
 				warn("[TaskManager] Erro ao iniciar '" .. name .. "':", err)
 			end
 		end)

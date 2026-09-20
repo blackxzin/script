@@ -186,7 +186,7 @@ function KickTelemetry:Start()
     -- Log de Injeção Inicial
     self:Event("inject", "Executor: " .. getExecutor())
     
-    self._watchSystem()
+    self:_watchSystem()
     
     -- Thread de Heartbeat (Monitoramento de HP/Status)
     self._thread = task.spawn(function()

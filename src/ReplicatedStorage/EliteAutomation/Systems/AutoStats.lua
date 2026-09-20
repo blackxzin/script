@@ -188,6 +188,27 @@ function AutoStats:Disable()
 	Logger.Info("AutoStats desativado")
 end
 
+function AutoStats:Start()
+	if self._thread then return end
+	self:Enable()
+	self._thread = task.spawn(function()
+		while self.Enabled do
+			local ok, err = pcall(function() self:Check() end)
+			if not ok then Logger.Error("AutoStats: " .. tostring(err)) end
+			task.wait(1)
+		end
+		self._thread = nil
+	end)
+end
+
+function AutoStats:Stop()
+	self:Disable()
+	if self._thread then
+		task.cancel(self._thread)
+		self._thread = nil
+	end
+end
+
 function AutoStats:GetBuildList()
 	local list = {}
 	for name, build in pairs(BUILDS) do

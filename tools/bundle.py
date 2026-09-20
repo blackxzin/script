@@ -80,19 +80,28 @@ HEADER = """-- ============================================================
 
 GUARD = """
 -- Previne execucao duplicada
-if getgenv and getgenv()._EliteAutomationLoaded then
+local __shared = _G
+if type(getgenv) == "function" then
+\tlocal __ok, __env = pcall(getgenv)
+\tif __ok and type(__env) == "table" then __shared = __env end
+end
+
+if __shared._EliteAutomationLoaded or __shared._EliteAutomationBooting then
 \twarn("[EliteAutomation] Script ja esta em execucao!")
 \treturn
 end
-if getgenv then getgenv()._EliteAutomationLoaded = true end
+__shared._EliteAutomationBooting = true
 
 -- NOTA: sem hook em game.HttpGet. Hook global quebra chamadas internas
 -- do Roblox/GPO (kick/disconnect) e e detectavel pelo anticheat.
 
 local executor = "Unknown"
-if identifyexecutor then executor = identifyexecutor()
-elseif getexecutorname then executor = getexecutorname()
-end
+local __identityOk, __identity = pcall(function()
+\tif type(identifyexecutor) == "function" then return identifyexecutor() end
+\tif type(getexecutorname) == "function" then return getexecutorname() end
+\treturn "Unknown"
+end)
+if __identityOk and __identity then executor = tostring(__identity) end
 
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 print("  [EliteAutomation v2.1] GPO Hub")
@@ -132,13 +141,15 @@ local function customRequire(target)
 \t\treturn __cache[name]
 \tend
 
-\treturn getfenv(0).require(target)
+\terror("[EliteAutomation] Modulo nao registrado no bundle: " .. tostring(name or target))
 end
 """
 
 
 def transform(content: str, fname: str) -> str:
     """Adapta módulo Rojo para o bundle: Root -> customRequire."""
+    # Mantém o artefato gerado estável e livre de espaços no fim das linhas.
+    content = "\n".join(line.rstrip() for line in content.splitlines())
     content = re.sub(
         r"^[ \t]*local Root\s*=.*WaitForChild.*$",
         "-- [Bundle] Root redirecionado",
@@ -186,8 +197,8 @@ def bundle() -> None:
         # ANTES do `do` do entrypoint. O client.lua chama
         # customRequire("EliteAutomation.UI.Components") para montar a UI
         # antes de qualquer outro módulo UI. Sem o preload, customRequire
-        # cai em getfenv(0).require() que nao resolve em bundle standalone
-        # e o construtor MainUI.new() morre silenciosamente (sem logs,
+        # sem o preload, o construtor MainUI.new() poderia tentar resolver
+        # dependencias antes que o registry estivesse pronto (sem logs,
         # sem ScreenGui, sem menu visível no executor).
         parts.append(
             "\n-- Pre-carregamento dos módulos exigidos diretamente pelo entrypoint\n"
@@ -201,9 +212,24 @@ def bundle() -> None:
             "\n-- ────────────────────────────────────────────────────────────\n"
             "-- Entrypoint: EliteAutomation.client.lua\n"
             "-- ────────────────────────────────────────────────────────────\n"
-            "do\n"
-            + transform(CLIENT.read_text(encoding="utf-8"), "client")
-            + "\nend\n"
+            "local __bootOk, __bootErr = xpcall(function()\n"
+            "\tdo\n"
+            + "\n".join(
+                ("\t" + line if line else "")
+                for line in transform(CLIENT.read_text(encoding="utf-8"), "client").splitlines()
+            )
+            + "\n\tend\n"
+            "end, function(err)\n"
+            "\tif debug and debug.traceback then return debug.traceback(tostring(err), 2) end\n"
+            "\treturn tostring(err)\n"
+            "end)\n"
+            "if not __bootOk then\n"
+            "\t__shared._EliteAutomationBooting = nil\n"
+            "\t__shared._EliteAutomationLoaded = nil\n"
+            "\terror(__bootErr)\n"
+            "end\n"
+            "__shared._EliteAutomationBooting = nil\n"
+            "__shared._EliteAutomationLoaded = true\n"
         )
 
     OUT_FILE.write_text("\n".join(parts), encoding="utf-8")

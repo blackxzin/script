@@ -4,7 +4,6 @@
 -- ============================================================
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Root = ReplicatedStorage:WaitForChild("EliteAutomation")
@@ -35,14 +34,15 @@ function ESP.new()
 
 	self._highlights = {}  -- [model] = Highlight instance
 	self._billboards = {}  -- [model] = BillboardGui
-	self._connections = {}
 	self._updateThread = nil
 
 	return self
 end
 
 -- ─── Cria Highlight em modelo ─────────────────────────────────
-function ESP:_createHighlight(model, color)
+
+function ESP:_createHighlight(model, color, category)
+	if not model or not model.Parent then return end
 	if self._highlights[model] then return end
 
 	local highlight = Instance.new("Highlight")
@@ -53,11 +53,12 @@ function ESP:_createHighlight(model, color)
 	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	highlight.Parent = model
 
-	self._highlights[model] = highlight
+	self._highlights[model] = { Instance = highlight, Category = category }
 end
 
 -- ─── Cria Billboard com texto ─────────────────────────────────
-function ESP:_createBillboard(model, text, color)
+function ESP:_createBillboard(model, text, color, category)
+	if not model or not model.Parent then return end
 	if self._billboards[model] then return end
 
 	local root = model:FindFirstChild("HumanoidRootPart")
@@ -83,32 +84,47 @@ function ESP:_createBillboard(model, text, color)
 	label.TextStrokeTransparency = 0.5
 	label.Parent = billboard
 
-	-- Adiciona distância
-	local char = Players.LocalPlayer.Character
-	if char then
-		local playerRoot = char:FindFirstChild("HumanoidRootPart")
-		if playerRoot then
-			RunService.Heartbeat:Connect(function()
-				if not billboard.Parent then return end
-				local dist = (root.Position - playerRoot.Position).Magnitude
-				label.Text = string.format("%s [%.0fm]", text, dist)
-			end)
-		end
-	end
-
-	self._billboards[model] = billboard
+	self._billboards[model] = {
+		Instance = billboard,
+		Label = label,
+		Root = root,
+		Text = text,
+		Category = category,
+	}
 end
 
 -- ─── Remove ESP de modelo ─────────────────────────────────────
 function ESP:_removeESP(model)
 	if self._highlights[model] then
-		self._highlights[model]:Destroy()
+		self._highlights[model].Instance:Destroy()
 		self._highlights[model] = nil
 	end
 
 	if self._billboards[model] then
-		self._billboards[model]:Destroy()
+		self._billboards[model].Instance:Destroy()
 		self._billboards[model] = nil
+	end
+end
+
+function ESP:_updateDistances()
+	local localPlayer = Players.LocalPlayer
+	local char = localPlayer and localPlayer.Character
+	local playerRoot = char and char:FindFirstChild("HumanoidRootPart")
+	if not playerRoot then return end
+
+	for model, data in pairs(self._billboards) do
+		if not model.Parent or not data.Instance.Parent or not data.Root.Parent then
+			self:_removeESP(model)
+		else
+			local dist = (data.Root.Position - playerRoot.Position).Magnitude
+			data.Label.Text = string.format("%s [%.0fm]", data.Text, dist)
+		end
+	end
+
+	for model, data in pairs(self._highlights) do
+		if not model.Parent or not data.Instance.Parent then
+			self:_removeESP(model)
+		end
 	end
 end
 
@@ -121,6 +137,7 @@ function ESP:_updateBosses()
 		"Kraken", "Sea Beast", "Ghost Ship", "Megalodon",
 		"Law", "Moria", "Enel", "Gravito", "Neptune",
 		"Ryuma", "Borj", "Pica", "Donmingo", "Lucy",
+		"Doflamingo", "Luci",
 	}
 
 	for _, name in ipairs(bossNames) do
@@ -128,9 +145,27 @@ function ESP:_updateBosses()
 		if boss and boss:IsA("Model") then
 			local hum = boss:FindFirstChildOfClass("Humanoid")
 			if hum and hum.Health > 0 then
-				self:_createHighlight(boss, COLORS.Boss)
-				self:_createBillboard(boss, "👑 " .. name, COLORS.Boss)
+				self:_createHighlight(boss, COLORS.Boss, "Boss")
+				self:_createBillboard(boss, "👑 " .. name, COLORS.Boss, "Boss")
 			end
+		end
+	end
+end
+
+-- ─── Atualiza ESP de NPCs ────────────────────────────────────
+function ESP:_updateNPCs()
+	if not self.Enabled.NPC then return end
+
+	local playerCharacters = {}
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.Character then playerCharacters[player.Character] = true end
+	end
+
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if obj:IsA("Model") and not playerCharacters[obj]
+			and obj:FindFirstChildOfClass("Humanoid") then
+			self:_createHighlight(obj, COLORS.NPC, "NPC")
+			self:_createBillboard(obj, "NPC: " .. obj.Name, COLORS.NPC, "NPC")
 		end
 	end
 end
@@ -142,8 +177,8 @@ function ESP:_updateFruits()
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if obj.Name == "Fruit" or obj.Name:find("Fruit", 1, true) then
 			if obj:IsA("Model") or obj:IsA("Tool") then
-				self:_createHighlight(obj, COLORS.Fruit)
-				self:_createBillboard(obj, "🍎 Devil Fruit", COLORS.Fruit)
+				self:_createHighlight(obj, COLORS.Fruit, "Fruit")
+				self:_createBillboard(obj, "🍎 Devil Fruit", COLORS.Fruit, "Fruit")
 			end
 		end
 	end
@@ -157,8 +192,8 @@ function ESP:_updatePlayers()
 		if player ~= Players.LocalPlayer then
 			local char = player.Character
 			if char then
-				self:_createHighlight(char, COLORS.Player)
-				self:_createBillboard(char, player.Name, COLORS.Player)
+				self:_createHighlight(char, COLORS.Player, "Player")
+				self:_createBillboard(char, player.Name, COLORS.Player, "Player")
 			end
 		end
 	end
@@ -170,8 +205,8 @@ function ESP:_updateChests()
 
 	for _, obj in ipairs(workspace:GetDescendants()) do
 		if obj.Name:find("Chest", 1, true) and obj:IsA("Model") then
-			self:_createHighlight(obj, COLORS.Chest)
-			self:_createBillboard(obj, "📦 Chest", COLORS.Chest)
+			self:_createHighlight(obj, COLORS.Chest, "Chest")
+			self:_createBillboard(obj, "📦 Chest", COLORS.Chest, "Chest")
 		end
 	end
 end
@@ -179,10 +214,15 @@ end
 -- ─── Loop de atualização ──────────────────────────────────────
 function ESP:_updateLoop()
 	while self._updateThread do
-		self:_updateBosses()
-		self:_updateFruits()
-		self:_updatePlayers()
-		self:_updateChests()
+		local ok, err = pcall(function()
+			self:_updateBosses()
+			self:_updateNPCs()
+			self:_updateFruits()
+			self:_updatePlayers()
+			self:_updateChests()
+			self:_updateDistances()
+		end)
+		if not ok then Logger.Error("ESP loop error:", err) end
 
 		task.wait(1)  -- Atualiza a cada 1s
 	end
@@ -195,8 +235,11 @@ function ESP:Toggle(category, enabled)
 
 		-- Remove ESP existente se desativado
 		if not enabled then
-			for model in pairs(self._highlights) do
-				self:_removeESP(model)
+			for model, data in pairs(self._highlights) do
+				if data.Category == category then self:_removeESP(model) end
+			end
+			for model, data in pairs(self._billboards) do
+				if data.Category == category then self:_removeESP(model) end
 			end
 		end
 
@@ -221,6 +264,9 @@ function ESP:Stop()
 	-- Remove todos os ESP
 	for model in pairs(self._highlights) do
 		self:_removeESP(model)
+	end
+	for category in pairs(self.Enabled) do
+		self.Enabled[category] = false
 	end
 
 	Logger.Info("ESP parado")

@@ -23,6 +23,10 @@ local function jitter(min, max)
 	return min + math.random() * (max - min)
 end
 
+local function getTargetRoot(target)
+	return target and (target:FindFirstChild("HumanoidRootPart") or target:FindFirstChildOfClass("BasePart"))
+end
+
 function CombatController.new(settings)
 	local self = setmetatable({}, CombatController)
 
@@ -144,7 +148,7 @@ end
 
 function CombatController:_distToTarget()
 	local root   = self:_getLocalRoot()
-	local tRoot  = self.Target and self.Target:FindFirstChild("HumanoidRootPart")
+	local tRoot  = getTargetRoot(self.Target)
 	if not root or not tRoot then return math.huge end
 	return (tRoot.Position - root.Position).Magnitude
 end
@@ -206,7 +210,7 @@ end
 -- ─── Executa um ataque (simula clique na hitbox com regulação) ──
 function CombatController:_performAttack()
 	if not self:_getLocalChar() then return end
-	local tRoot = self.Target and self.Target:FindFirstChild("HumanoidRootPart")
+	local tRoot = getTargetRoot(self.Target)
 	if not tRoot then return end
 
 	-- Regulação de Stamina: Se a stamina estiver crítica (<15%), desacelera ataques para evitar Guard Break
@@ -221,11 +225,15 @@ function CombatController:_performAttack()
 	self:_checkHaki()
 
 	-- Em Grand Piece Online (GPO), ataques corpo-a-corpo e armas usam M1 (Mouse1).
-	local vim = game:GetService("VirtualInputManager")
-	if vim then
+	local ok, vim = pcall(function()
+		return game:GetService("VirtualInputManager")
+	end)
+	if ok and vim then
 		-- Usa movimento humanizado para clique
-		HumanMovement.HumanClick(function(pressed)
-			vim:SendMouseButtonEvent(0, 0, 0, pressed, game, 1)
+		pcall(function()
+			HumanMovement.HumanClick(function(pressed)
+				vim:SendMouseButtonEvent(0, 0, 0, pressed, game, 1)
+			end)
 		end)
 	end
 
@@ -240,7 +248,7 @@ end
 -- ─── Farm de arma: kite na faixa segura atirando (M1 a distância) ──
 function CombatController:_kiteTick()
 	local root = self:_getLocalRoot()
-	local tRoot = self.Target and self.Target:FindFirstChild("HumanoidRootPart")
+	local tRoot = getTargetRoot(self.Target)
 	if not root or not tRoot then return end
 
 	local now = os.clock()

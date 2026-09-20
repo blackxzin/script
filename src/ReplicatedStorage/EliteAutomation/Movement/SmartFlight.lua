@@ -27,6 +27,11 @@ local function aliveChar(self)
     return root
 end
 
+function SmartFlight:_getHumanoid()
+    local char = self.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
 local function lookCFrame(pos, dir)
     if dir and dir.Magnitude > 0.1 then
         return CFrame.new(pos, pos + dir.Unit)
@@ -177,32 +182,36 @@ function SmartFlight:FlyTo(targetPos)
     local speed = math.clamp(self.SpeedBase + (math.random(-6, 6)), MIN_SPEED, MAX_SPEED)
 
     -- 2. Determinação de Altitude Segura
-    local targetSafeY = self:_safeY(targetPos)
+    -- Mantém a altura mínima segura, mas respeita uma altura explícita
+    -- enviada pelo farm (por exemplo, a altura da Factory/Law).
+    local targetSafeY = math.max(targetPos.Y, self:_safeY(targetPos))
     local startPos = root.Position
     
-    -- 3. Trajetória em 3 Fases: Subida -> Cruzeiro -> Descida
-    local targetFinalCFrame = CFrame.new(targetPos.X, targetSafeY, targetPos.Z)
-    
-    -- Fase de Subida/Ajuste de Altitude
-    local cruiseY = math.max(startPos.Y, targetSafeY)
-    local cruisePos = Vector3.new(startPos.X, cruiseY, startPos.Z)
+    -- 3. Trajetória em segmentos até a posição com altitude segura.
+    -- Comparar com targetPos.Y poderia deixar o loop infinito quando o alvo
+    -- estivesse abaixo do nível seguro calculado pelo sistema.
+    local targetFinalPos = Vector3.new(targetPos.X, targetSafeY, targetPos.Z)
 
     -- Loop de Segmentos (Chunking)
     local currentPos = startPos
     while myFlight == self._flightId do
-        local distToTarget = (targetPos - currentPos).Magnitude
+        local distToTarget = (targetFinalPos - currentPos).Magnitude
         if distToTarget < 2 then break end
 
         -- Calcula o próximo waypoint para o chunk
-        local direction = (targetPos - currentPos).Unit
+        local direction = (targetFinalPos - currentPos).Unit
         local nextStep = currentPos + (direction * math.min(distToTarget, SEG_LEN))
         local nextStepPos = Vector3.new(nextStep.X, targetSafeY, nextStep.Z)
 
-        -- Executa o movimento segmentado
-        local success = self:_tweenTo(CFrame.new(nextStepPos), speed)
+        -- Executa o movimento segmentado e orienta o personagem para o
+        -- próximo trecho. CFrame.new(pos) movia, mas deixava a orientação
+        -- antiga, dando a impressão de que o personagem não seguia o rumo.
+        local waypointCFrame = lookCFrame(nextStepPos, direction)
+        local success = self:_tweenTo(waypointCFrame, speed)
         if not success then break end
         
-        currentPos = nextStepPos
+        local currentRoot = aliveChar(self)
+        currentPos = currentRoot and currentRoot.Position or nextStepPos
         task.wait(0.05) -- Micro-pausa para estabilização
     end
 
@@ -211,6 +220,7 @@ function SmartFlight:FlyTo(targetPos)
 end
 
 function SmartFlight:FlyToTarget(targetPart, stopRadius)
+    if not targetPart or not targetPart.Parent then return false end
     local stopRadius = stopRadius or 10
     local targetPos = targetPart.Position
 
@@ -227,7 +237,7 @@ end
 
 function SmartFlight:_cleanup()
     self._flying = false
-    self._noclipConn = nil
+    self:_stopNoclip()
     
     local hum = self:_getHumanoid()
     if hum then

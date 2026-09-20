@@ -58,9 +58,9 @@ return {
 		RangedMax         = 60,      -- Distância máxima de combate à distância
 		
 		-- Haki e Defesa
-		AutoBusoHaki      = true,    -- Ativação automática de Haki do Armamento
-		AutoKenHaki       = true,    -- Ativação automática de Haki da Observação
-		AutoGrip         = true,    -- Execução automática de alvos caídos ('B')
+		AutoBusoHaki      = false,   -- Ativação explícita de Haki do Armamento
+		AutoKenHaki       = false,   -- Ativação explícita de Haki da Observação
+		AutoGrip          = false,   -- Execução explícita de alvos nocauteados ('B')
 		
 		-- Combos e Skills
 		UseCombo          = true,    -- Ativa cadeias de combos pré-configuradas
@@ -99,7 +99,7 @@ return {
 		
 		RaidBosses = {
 			-- Configurações de Raids (Moria, Baal, etc)
-			Moria = { PhaseCount = 2, WaveCount = 5, RewardPeli = 75000 },
+			Moria = { Name = "Moria", PhaseCount = 2, WaveCount = 5, RewardPeli = 75000 },
 		}
 	},
 

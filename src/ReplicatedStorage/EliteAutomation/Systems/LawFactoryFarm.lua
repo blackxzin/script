@@ -50,6 +50,7 @@ function LawFactoryFarm.new(combat, smartFlight, notifications, settings)
     self._lastSkill      = 0
     self._skillIdx       = 1
     self._skillTimes     = {}
+    self._lastNavigation = { Factory = 0, Law = 0 }
     self._running        = false
     self._thread         = nil
     self._activeThreads  = {} -- Para gerenciar loops de segurança
@@ -66,13 +67,15 @@ end
 
 -- ─── [3] MÉTODOS DE SUPORTE (Helpers) ───────────────────────
 
-function LawFactoryFarm:_findModel(namesList)
+function LawFactoryFarm:_findModel(namesList, requireHumanoid)
+    requireHumanoid = requireHumanoid ~= false
     for _, name in ipairs(namesList) do
         local model = workspace:FindFirstChild(name, true)
-        if model and model:IsA("Model") then
+        if model and (model:IsA("Model") or model:IsA("BasePart")) then
             local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildOfClass("BasePart")
             local hum = model:FindFirstChildOfClass("Humanoid")
-            if root and hum and hum.Health > 0 then
+            if model:IsA("BasePart") then root = model end
+            if root and (not requireHumanoid or (hum and hum.Health > 0)) then
                 return model, root, hum
             end
         end
@@ -86,6 +89,18 @@ function LawFactoryFarm:_detectLava()
         return lava.Position.Y
     end
     return -math.huge
+end
+
+function LawFactoryFarm:_shouldNavigate(key)
+    local now = os.clock()
+    if now - (self._lastNavigation[key] or 0) < 8 then return false end
+    self._lastNavigation[key] = now
+    return true
+end
+
+function LawFactoryFarm:_goToConfiguredLocation(key, position)
+    if not self.SmartFlight or not position or not self:_shouldNavigate(key) then return false end
+    return self.SmartFlight:FlyTo(position)
 end
 
 -- ─── [4] LÓGICA DE COMBATE AVANÇADO ─────────────────────────
@@ -104,8 +119,10 @@ function LawFactoryFarm:_cyborgTick()
     self._lastSkill = now
     self._skillIdx = (self._skillIdx % #CYBORG_KEYS) + 1
 
-    local vim = game:GetService("VirtualInputManager")
-    if vim then
+    local ok, vim = pcall(function()
+        return game:GetService("VirtualInputManager")
+    end)
+    if ok and vim then
         pcall(function()
             vim:SendKeyEvent(true, key, false, game)
             task.wait(0.05)
@@ -118,9 +135,11 @@ end
 
 -- Rotina de Farm da Factory (Core)
 function LawFactoryFarm:_handleFactory()
-    local coreModel, corePart = self:_findModel(CORE_NAMES)
+    local coreModel, corePart = self:_findModel(CORE_NAMES, false)
     if not coreModel then
-        self.FactoryStatus = "Aguardando Core..."
+        self.FactoryStatus = "Indo para Factory / aguardando Core..."
+        self:_goToConfiguredLocation("Factory", self.FactoryLocation)
+        if self.AutoStartRaid then self:_startRaid() end
         return
     end
 
@@ -168,6 +187,8 @@ function LawFactoryFarm:_handleLaw()
     local lawModel, lawRoot, lawHum = self:_findModel(LAW_NAMES)
     if not lawModel or not lawRoot then
         -- Tenta iniciar a Raid se configurado
+        self.LawStatus = "Indo para Law / aguardando spawn..."
+        self:_goToConfiguredLocation("Law", self.LawLocation)
         if self.AutoStartRaid then
             self:_startRaid()
         end
@@ -180,6 +201,7 @@ function LawFactoryFarm:_handleLaw()
     local timeout = os.clock() + 450
     while self.LawEnabled and os.clock() < timeout do
         local currentLawRoot = lawModel:FindFirstChild("HumanoidRootPart")
+            or lawModel:FindFirstChildOfClass("BasePart")
         if not currentLawRoot or not lawHum or lawHum.Health <= 0 then break end
 
         local playerChar = Players.LocalPlayer.Character
@@ -209,9 +231,43 @@ end
 -- ─── [6] MÉTODOS DE SUPORTE E API ───────────────────────────
 
 function LawFactoryFarm:_startRaid()
-    -- Lógica para acionar o terminal de raid
-    Logger.Info("Iniciando Raid Automática...")
-    -- Implementação de ProximityPrompt ou ClickDetector aqui
+    local terminal
+    for _, name in ipairs(RAID_POD_NAMES) do
+        terminal = workspace:FindFirstChild(name, true)
+        if terminal then break end
+    end
+
+    if not terminal then
+        Logger.Debug("Terminal de raid ainda não encontrado.")
+        return false
+    end
+
+    local part = terminal:IsA("BasePart") and terminal or terminal:FindFirstChild("HumanoidRootPart")
+        or terminal:FindFirstChildOfClass("BasePart")
+    if part and self.SmartFlight then
+        self.SmartFlight:FlyTo(part.Position + Vector3.new(0, 3, 0))
+    end
+
+    local prompt = terminal:FindFirstChildOfClass("ProximityPrompt", true)
+    if prompt and fireproximityprompt then
+        local ok = pcall(function() fireproximityprompt(prompt) end)
+        if ok then
+            Logger.Info("Terminal de raid acionado por ProximityPrompt.")
+            return true
+        end
+    end
+
+    local detector = terminal:FindFirstChildOfClass("ClickDetector", true)
+    if detector and fireclickdetector then
+        local ok = pcall(function() fireclickdetector(detector) end)
+        if ok then
+            Logger.Info("Terminal de raid acionado por ClickDetector.")
+            return true
+        end
+    end
+
+    Logger.Debug("Terminal encontrado, mas sem interação compatível.")
+    return false
 end
 
 function LawFactoryFarm:_loop()
@@ -236,7 +292,10 @@ end
 
 function LawFactoryFarm:Stop()
     self._running = false
-    if self._thread then task.cancel(self._thread) end
+    if self._thread then
+        task.cancel(self._thread)
+        self._thread = nil
+    end
     self.FactoryEnabled = false
     self.LawEnabled = false
     self.LawStatus = "Desativado"
@@ -246,11 +305,21 @@ end
 
 function LawFactoryFarm:SetFactoryEnabled(enabled)
     self.FactoryEnabled = enabled
+    if enabled then
+        self:Start()
+    elseif not self.LawEnabled then
+        self:Stop()
+    end
     Logger.Info("Factory Farm: " .. (enabled and "ON" or "OFF"))
 end
 
 function LawFactoryFarm:SetLawEnabled(enabled)
     self.LawEnabled = enabled
+    if enabled then
+        self:Start()
+    elseif not self.FactoryEnabled then
+        self:Stop()
+    end
     Logger.Info("Law Farm: " .. (enabled and "ON" or "OFF"))
 end
 

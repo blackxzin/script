@@ -32,7 +32,7 @@ function MerchantTracker.new(notifications, settings)
     self.ScanInterval  = self.Settings.ScanInterval or 2.0
     
     -- Mapeamento de Ilhas (Coordenadas de Referência)
-    self.KnownIslands  = self.Settings.KnownIslands or {
+    self.KnownIslands  = {
         ["Town of Beginnings"] = Vector3.new(1100, 15, 1200),
         ["Sandora"]            = Vector3.new(-1100, 15, 1400),
         ["Shells Town"]        = Vector3.new(-3800, 15, -4200),
@@ -54,6 +54,11 @@ function MerchantTracker.new(notifications, settings)
         ["Thriller Bark"]      = Vector3.new(-5400, 80, -7800),
         ["Rose Kingdom"]       = Vector3.new(450, 120, -180),
     }
+    for islandName, islandPosition in pairs(self.Settings.KnownIslands or {}) do
+        if typeof(islandPosition) == "Vector3" then
+            self.KnownIslands[islandName] = islandPosition
+        end
+    end
 
     self._running        = false
     self._thread         = nil
@@ -61,6 +66,9 @@ function MerchantTracker.new(notifications, settings)
     self._smartFlight    = nil
     self._lastState      = false
     self._lastFly        = 0
+    self.FirstSpawnDelay = self.Settings.FirstSpawnDelay or 600
+    self.ActiveDuration  = self.Settings.ActiveDuration or 600
+    self.CycleDuration   = self.Settings.CycleDuration or 1800
 
     return self
 end
@@ -91,7 +99,7 @@ function MerchantTracker:_findMerchant()
     end
 
     -- Fallback: Busca por string parcial para variações de nome
-    for _, obj in ipairs(workspace:GetChildren()) do
+    for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj.Name:lower():find("merchant", 1, true) then
             local root = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildOfClass("BasePart")
             if root then return obj, root.Position end
@@ -108,8 +116,8 @@ function MerchantTracker:GetSchedule()
     local uptime = workspace.DistributedGameTime or 0
 
     -- Ciclo: Spawn em 10m, Ativo por 10m, Cooldown de 30m
-    if uptime < 600 then
-        local timeToFirst = math.ceil(600 - uptime)
+    if uptime < self.FirstSpawnDelay then
+        local timeToFirst = math.ceil(self.FirstSpawnDelay - uptime)
         return {
             Status = "WAITING",
             SecondsLeft = timeToFirst,
@@ -118,9 +126,9 @@ function MerchantTracker:GetSchedule()
         }
     end
 
-    local cycleElapsed = (uptime - 600) % 1800
-    if cycleElapsed < 600 then
-        local despawnIn = math.ceil(600 - cycleElapsed)
+    local cycleElapsed = (uptime - self.FirstSpawnDelay) % self.CycleDuration
+    if cycleElapsed < self.ActiveDuration then
+        local despawnIn = math.ceil(self.ActiveDuration - cycleElapsed)
         return {
             Status = "ACTIVE",
             SecondsLeft = despawnIn,
@@ -128,7 +136,7 @@ function MerchantTracker:GetSchedule()
             IsActive = true
         }
     else
-        local nextIn = math.ceil(1800 - cycleElapsed)
+        local nextIn = math.ceil(self.CycleDuration - cycleElapsed)
         return {
             Status = "WAITING",
             SecondsLeft = nextIn,
@@ -158,7 +166,7 @@ function MerchantTracker:_loop()
                         spawnTime = os.clock()
                     }
 
-                    if self.Notifications then
+                    if self.Settings.NotifyOnSpawn ~= false and self.Notifications then
                         local lp = Players.LocalPlayer
                         if lp and lp.PlayerGui then
                             self.Notifications.Create(lp.PlayerGui, "🛒 MERCADOR DETECTADO", 
@@ -194,8 +202,19 @@ function MerchantTracker:SetFlight(smartFlight)
 end
 
 function MerchantTracker:FlyToMerchant()
+    -- Atualiza o cache antes do voo para não seguir uma posição antiga.
+    local model, position = self:_findMerchant()
+    if model and position then
+        local islandName = self:_identifyIsland(position)
+        self._currentMerchant = self._currentMerchant or { spawnTime = os.clock() }
+        self._currentMerchant.model = model
+        self._currentMerchant.position = position
+        self._currentMerchant.island = islandName
+    end
+
     local now = os.clock()
-    if not self._currentMerchant or not self._currentMerchant.position then
+    if not self._currentMerchant or not self._currentMerchant.position
+        or not self._currentMerchant.model or not self._currentMerchant.model.Parent then
         Logger.Warn("MerchantTracker: Mercador não está ativo.")
         return false
     end
@@ -207,7 +226,8 @@ function MerchantTracker:FlyToMerchant()
     local targetPos = self._currentMerchant.position + Vector3.new(0, 4, 0)
     
     -- Validação de Coordenadas (Anti-NaN)
-    if targetPos.X ~= targetPos.X or targetPos.Y ~= targetPos.Y or targetPos.Z ~= targetPos.Z then
+    if targetPos.X ~= targetPos.X or targetPos.Y ~= targetPos.Y or targetPos.Z ~= targetPos.Z
+        or math.abs(targetPos.X) > 1e5 or math.abs(targetPos.Y) > 1e5 or math.abs(targetPos.Z) > 1e5 then
         return false
     end
 
@@ -217,7 +237,10 @@ function MerchantTracker:FlyToMerchant()
     end
 
     Logger.Info("Voando para o Mercador em: " .. self._currentMerchant.island)
-    self._smartFlight:FlyTo(targetPos)
+    if not self._smartFlight:FlyTo(targetPos) then
+        Logger.Warn("MerchantTracker: voo até o Mercador foi interrompido.")
+        return false
+    end
     return true
 end
 
@@ -230,7 +253,10 @@ end
 
 function MerchantTracker:Stop()
     self._running = false
-    if self._thread then task.cancel(self._thread) end
+    if self._thread then
+        task.cancel(self._thread)
+        self._thread = nil
+    end
     self._currentMerchant = nil
     self._lastState = false
     Logger.Info("MerchantTracker parado.")

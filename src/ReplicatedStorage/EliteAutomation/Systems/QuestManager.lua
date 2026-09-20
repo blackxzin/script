@@ -138,7 +138,10 @@ function QuestManager:_acceptQuest(quest)
 
 	-- 1. Deslocamento para o NPC
 	if self.SmartFlight then
-		self.SmartFlight:FlyTo(quest.Location)
+		if not self.SmartFlight:FlyTo(quest.Location) then
+			Logger.Warn("Deslocamento para a quest interrompido: " .. quest.Name)
+			return false
+		end
 		task.wait(1.5) -- Delay de estabilização de voo
 	end
 
@@ -152,13 +155,13 @@ function QuestManager:_acceptQuest(quest)
 	-- 3. Interação (ProximityPrompt ou ClickDetector)
 	local prompt = npc:FindFirstChildOfClass("ProximityPrompt", true)
 	if prompt and fireproximityprompt then
-		fireproximityprompt(prompt)
+		pcall(function() fireproximityprompt(prompt) end)
 		task.wait(0.5)
 	end
 
 	local detector = npc:FindFirstChildOfClass("ClickDetector", true)
 	if detector and fireclickdetector then
-		fireclickdetector(detector)
+		pcall(function() fireclickdetector(detector) end)
 		task.wait(0.5)
 	end
 
@@ -190,7 +193,7 @@ function QuestManager:_farmEnemies(quest)
 		if target then
 			-- 1. Posicionamento e Combate
 			if self.SmartFlight then
-				self.SmartFlight:FlyTo(target.PrimaryPart and target.PrimaryPart.Position or target.GetPivot().Position)
+				self.SmartFlight:FlyTo(target.PrimaryPart and target.PrimaryPart.Position or target:GetPivot().Position)
 			end
 
 			if self.Combat then

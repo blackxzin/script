@@ -21,6 +21,7 @@ function AntiAFK.new()
 	self._thread = nil
 	self._lastAction = os.clock()
 	self.ActionInterval = 120  -- Ação a cada 2 minutos
+	self._movementGuard = nil
 
 	return self
 end
@@ -79,20 +80,35 @@ function AntiAFK:_simulateInput()
 			}
 			local key = keys[math.random(#keys)]
 
-			local vim = game:GetService("VirtualInputManager")
-			if vim then
-				vim:SendKeyEvent(true, key, false, game)
-				task.wait(HumanMovement.HumanDelay(0.1, 0.05))
-				vim:SendKeyEvent(false, key, false, game)
+			local ok, vim = pcall(function()
+				return game:GetService("VirtualInputManager")
+			end)
+			if ok and vim then
+				pcall(function()
+					vim:SendKeyEvent(true, key, false, game)
+					task.wait(HumanMovement.HumanDelay(0.1, 0.05))
+					vim:SendKeyEvent(false, key, false, game)
+				end)
 			end
 		end,
 	}
 
-	-- Executa ação aleatória
-	local action = actions[math.random(#actions)]
+	-- Durante um farm, evita Humanoid:MoveTo/pulo/teclas para não disputar
+	-- controle com o SmartFlight. A câmera continua gerando atividade segura.
+	local movementBusy = false
+	if self._movementGuard then
+		local ok, result = pcall(self._movementGuard)
+		movementBusy = ok and result == true
+	end
+
+	local action = movementBusy and actions[1] or actions[math.random(#actions)]
 	action()
 
 	Logger.Debug("Anti-AFK: ação executada")
+end
+
+function AntiAFK:SetMovementGuard(callback)
+	self._movementGuard = callback
 end
 
 -- ─── Loop anti-AFK ────────────────────────────────────────────
@@ -137,6 +153,7 @@ end
 function AntiAFK:Start()
 	if self.Enabled then return end
 	self.Enabled = true
+	self._lastAction = os.clock()
 
 	self._thread = task.spawn(function()
 		self:_loop()

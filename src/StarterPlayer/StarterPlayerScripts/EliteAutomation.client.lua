@@ -38,6 +38,13 @@ local BossManager     = require(Root.Systems.BossManager)
 local ItemFarm        = require(Root.Systems.ItemFarm)
 local MerchantTracker = require(Root.Systems.MerchantTracker)
 local LawFactoryFarm  = require(Root.Systems.LawFactoryFarm)
+local AntiAFK         = require(Root.Systems.AntiAFK)
+local FarmRotation    = require(Root.Systems.FarmRotation)
+local QuestManager    = require(Root.Systems.QuestManager)
+local AutoHeal        = require(Root.Systems.AutoHeal)
+local AutoStats       = require(Root.Systems.AutoStats)
+local ESP             = require(Root.Systems.ESP)
+local TeleportManager = require(Root.Systems.TeleportManager)
 local AdaptiveBrain   = require(Root.Systems.AdaptiveBrain)
 local KickTelemetry   = require(Root.Systems.KickTelemetry)
 
@@ -58,9 +65,29 @@ Logger.Info("━━━━━━━━━━━━━━━━━━━━━━�
 
 -- Gerenciador de tarefas (O coração do controle)
 local manager = TaskManager.new()
+local taskToggles = {}
+local FARM_TASKS = {"BossFarm", "FarmRotation", "QuestFarm", "FruitTracker", "ItemFarm", "FactoryFarm", "LawFarm"}
+
+local function stopConflictingFarms(activeName)
+    local raidTask = activeName == "FactoryFarm" or activeName == "LawFarm"
+    for _, name in ipairs(FARM_TASKS) do
+        local sameRaidEngine = raidTask and (name == "FactoryFarm" or name == "LawFarm")
+        if name ~= activeName and not sameRaidEngine and manager:IsEnabled(name) then
+            manager:SetEnabled(name, false)
+            local toggle = taskToggles[name]
+            if toggle then toggle.SetEnabled(false) end
+            Logger.Warn("Farm interrompido para evitar conflito: " .. name)
+        end
+    end
+end
 
 -- Inicialização do Personagem e Movimento
 local smartFlight = SmartFlight.new(character, Settings.Movement)
+local characterConnection = localPlayer.CharacterAdded:Connect(function(newCharacter)
+    character = newCharacter
+    smartFlight:SetCharacter(newCharacter)
+    Logger.Info("Personagem atualizado após respawn.")
+end)
 
 -- Inicialização do Combate
 local combatController = CombatController.new(Settings.Combat)
@@ -76,6 +103,19 @@ local itemFarm = ItemFarm.new(smartFlight, Notifications, Settings.ItemFarm)
 local merchantTracker = MerchantTracker.new(Notifications, Settings.MerchantTracker)
 merchantTracker:SetFlight(smartFlight)
 local lawFactoryFarm = LawFactoryFarm.new(combatController, smartFlight, Notifications, Settings.LawFactoryFarm)
+local antiAFK = AntiAFK.new()
+antiAFK:SetMovementGuard(function()
+    for _, name in ipairs(FARM_TASKS) do
+        if manager:IsEnabled(name) then return true end
+    end
+    return false
+end)
+local farmRotation = FarmRotation.new(combatController, smartFlight, Notifications)
+local questManager = QuestManager.new(combatController, smartFlight, Notifications, Settings)
+local autoHeal = AutoHeal.new()
+local autoStats = AutoStats.new("Hybrid", Notifications)
+local esp = ESP.new()
+local teleportManager = TeleportManager.new(smartFlight, Notifications)
 
 -- Inicialização da Inteligência e Segurança
 local adaptiveBrain = AdaptiveBrain.new(combatController, smartFlight, bossManager, lawFactoryFarm)
@@ -105,6 +145,8 @@ end
 
 -- [FARM DE BOSSES]
 manager:Register("BossFarm", function()
+    stopConflictingFarms("BossFarm")
+    if not manager:IsEnabled("AntiDetection") then adaptiveBrain:Start() end
     combatController:Start()
     bossManager:Start()
     Logger.Info("SISTEMA: Farm de Bosses Ativado.")
@@ -116,6 +158,7 @@ end)
 
 -- [FRUTAS]
 manager:Register("FruitTracker", function()
+    stopConflictingFarms("FruitTracker")
     fruitTracker:Start()
     Logger.Info("SISTEMA: Rastreador de Frutas Ativado.")
 end, function()
@@ -131,6 +174,67 @@ end, function()
     Logger.Info("SISTEMA: Coleta Automática OFF.")
 end)
 
+-- [ITENS]
+manager:Register("ItemFarm", function()
+    stopConflictingFarms("ItemFarm")
+    itemFarm:Start()
+    Logger.Info("SISTEMA: Farm de itens ativado.")
+end, function()
+    itemFarm:Stop()
+    Logger.Info("SISTEMA: Farm de itens desativado.")
+end)
+
+-- [ANTI-AFK]
+manager:Register("AntiAFK", function()
+    antiAFK:Start()
+end, function()
+    antiAFK:Stop()
+end)
+
+-- [ROTAÇÃO DE BOSSES]
+manager:Register("FarmRotation", function()
+    stopConflictingFarms("FarmRotation")
+    if not manager:IsEnabled("AntiDetection") then adaptiveBrain:Start() end
+    combatController:Start()
+    farmRotation:Start()
+end, function()
+    farmRotation:Stop()
+    combatController:Stop()
+end)
+
+-- [QUESTS]
+manager:Register("QuestFarm", function()
+    stopConflictingFarms("QuestFarm")
+    if not manager:IsEnabled("AntiDetection") then adaptiveBrain:Start() end
+    combatController:Start()
+    questManager:Start()
+end, function()
+    questManager:Stop()
+    combatController:Stop()
+end)
+
+-- [UTILIDADES]
+manager:Register("AutoHeal", function()
+    autoHeal:Start()
+end, function()
+    autoHeal:Stop()
+end)
+
+manager:Register("AutoStats", function()
+    autoStats:Start()
+end, function()
+    autoStats:Stop()
+end)
+
+manager:Register("ESP", function()
+    esp:Start()
+    for _, category in ipairs({"Boss", "NPC", "Fruit", "Player", "Chest"}) do
+        esp:Toggle(category, true)
+    end
+end, function()
+    esp:Stop()
+end)
+
 -- [SEGURANÇA E ANTI-DETECÇÃO]
 manager:Register("AntiDetection", function()
     Settings.General.AntiDetectionMode = true
@@ -144,7 +248,7 @@ end, function()
     adaptiveBrain:Start()
     smartFlight.SpeedBase = Settings.Movement.DefaultSpeed
     combatController.AttackMin = Settings.Combat.AttackIntervalMin
-    combatController.AttackMax = Settings.Combat.AttackMax
+    combatController.AttackMax = Settings.Combat.AttackIntervalMax
     Logger.Info("SEGURANÇA: Modo Anti-Detecção DESATIVADO.")
 end)
 
@@ -153,9 +257,39 @@ manager:Register("AutoBuso", function() combatController.AutoBusoHaki = true end
 manager:Register("AutoKen", function() combatController.AutoKenHaki = true end, function() combatController.AutoKenHaki = false end)
 manager:Register("AutoGrip", function() combatController.AutoGrip = true end, function() combatController.AutoGrip = false end)
 
+-- [COMBATE À DISTÂNCIA]
+manager:Register("RangedFarm", function()
+    combatController:SetRangedMode(true)
+end, function()
+    combatController:SetRangedMode(false)
+end)
+
+-- [MERCADOR]
+manager:Register("MerchantTracker", function()
+    merchantTracker:Start()
+end, function()
+    merchantTracker:Stop()
+end)
+
 -- [RAIDS]
-manager:Register("FactoryFarm", function() lawFactoryFarm:SetFactoryEnabled(true) end, function() lawFactoryFarm:SetFactoryEnabled(false) end)
-manager:Register("LawFarm", function() lawFactoryFarm:SetLawEnabled(true) end, function() lawFactoryFarm:SetLawEnabled(false) end)
+manager:Register("FactoryFarm", function()
+    stopConflictingFarms("FactoryFarm")
+    if not manager:IsEnabled("AntiDetection") then adaptiveBrain:Start() end
+    combatController:Start()
+    lawFactoryFarm:SetFactoryEnabled(true)
+end, function()
+    lawFactoryFarm:SetFactoryEnabled(false)
+    if not manager:IsEnabled("LawFarm") then combatController:Stop() end
+end)
+manager:Register("LawFarm", function()
+    stopConflictingFarms("LawFarm")
+    if not manager:IsEnabled("AntiDetection") then adaptiveBrain:Start() end
+    combatController:Start()
+    lawFactoryFarm:SetLawEnabled(true)
+end, function()
+    lawFactoryFarm:SetLawEnabled(false)
+    if not manager:IsEnabled("FactoryFarm") then combatController:Stop() end
+end)
 
 -- ============================================================
 -- CONSTRUÇÃO DA INTERFACE (UI)
@@ -191,13 +325,18 @@ local brainLabel = Components.CreateStatusLabel(frameMain, "IA Brain", "Idle")
 adaptiveBrain.OnAdjust = function(text) brainLabel.SetValue(text) end
 
 Components.CreateSection(frameMain, "⚔️ Automação Principal")
-Components.CreateToggle(frameMain, "Auto-Farm Bosses", function(en) manager:SetEnabled("BossFarm", en) end)
-Components.CreateToggle(frameMain, "Rastreador de Frutas", function(en) manager:SetEnabled("FruitTracker", en) end)
-Components.CreateToggle(frameMain, "Coleta Automática", function(en) manager:SetEnabled("AutoCollect", en) end)
-Components.CreateToggle(frameMain, "Modo Anti-Detecção", function(en) manager:SetEnabled("AntiDetection", en) end)
+taskToggles.BossFarm = Components.CreateToggle(frameMain, "Auto-Farm Bosses", function(en) manager:SetEnabled("BossFarm", en) end)
+taskToggles.FruitTracker = Components.CreateToggle(frameMain, "Rastreador de Frutas", function(en) manager:SetEnabled("FruitTracker", en) end)
+taskToggles.AutoCollect = Components.CreateToggle(frameMain, "Coleta Automática", function(en) manager:SetEnabled("AutoCollect", en) end)
+taskToggles.AntiDetection = Components.CreateToggle(frameMain, "Modo Anti-Detecção", function(en) manager:SetEnabled("AntiDetection", en) end)
+taskToggles.MerchantTracker = Components.CreateToggle(frameMain, "Rastreador de Mercador", function(en) manager:SetEnabled("MerchantTracker", en) end)
+taskToggles.AntiAFK = Components.CreateToggle(frameMain, "Anti-AFK", function(en) manager:SetEnabled("AntiAFK", en) end)
+taskToggles.AutoHeal = Components.CreateToggle(frameMain, "Auto-Heal", function(en) manager:SetEnabled("AutoHeal", en) end)
+taskToggles.ESP = Components.CreateToggle(frameMain, "ESP Completo", function(en) manager:SetEnabled("ESP", en) end)
 
 Components.CreateSection(frameMain, "🚀 Atalhos")
 Components.CreateButton(frameMain, "Voar até Mercador", function()
+    stopConflictingFarms("Merchant")
     if merchantTracker:IsActive() then
         merchantTracker:FlyToMerchant()
     else
@@ -209,22 +348,24 @@ end)
 -- ABA: COMBAT (Configurações de Luta)
 -- ────────────────────────────────────────────────────────────
 Components.CreateSection(frameCombat, "🏭 Raids & Bosses")
-Components.CreateToggle(frameCombat, "Auto-Farm Factory (Core)", function(en) manager:SetEnabled("FactoryFarm", en) end)
-Components.CreateToggle(frameCombat, "Auto-Farm Law (Order)", function(en) manager:SetEnabled("LawFarm", en) end)
+taskToggles.FactoryFarm = Components.CreateToggle(frameCombat, "Auto-Farm Factory (Core)", function(en) manager:SetEnabled("FactoryFarm", en) end)
+taskToggles.LawFarm = Components.CreateToggle(frameCombat, "Auto-Farm Law (Order)", function(en) manager:SetEnabled("LawFarm", en) end)
+taskToggles.FarmRotation = Components.CreateToggle(frameCombat, "Rotação de Bosses", function(en) manager:SetEnabled("FarmRotation", en) end)
+taskToggles.QuestFarm = Components.CreateToggle(frameCombat, "Farm de Quests", function(en) manager:SetEnabled("QuestFarm", en) end)
 
 Components.CreateSection(frameCombat, "✨ Haki & Skills")
-Components.CreateToggle(frameCombat, "Auto-Buso Haki", function(en) manager:SetEnabled("AutoBuso", en) end)
-Components.CreateToggle(frameCombat, "Auto-Ken Haki", function(en) manager:SetEnabled("AutoKen", en) end)
-Components.CreateToggle(frameCombat, "Auto-Grip (Executar)", function(en) manager:SetEnabled("AutoGrip", en) end)
+taskToggles.AutoBuso = Components.CreateToggle(frameCombat, "Auto-Buso Haki", function(en) manager:SetEnabled("AutoBuso", en) end)
+taskToggles.AutoKen = Components.CreateToggle(frameCombat, "Auto-Ken Haki", function(en) manager:SetEnabled("AutoKen", en) end)
+taskToggles.AutoGrip = Components.CreateToggle(frameCombat, "Auto-Grip (Executar)", function(en) manager:SetEnabled("AutoGrip", en) end)
 
 Components.CreateSection(frameCombat, "🛡️ Combate Avançado")
-Components.CreateToggle(frameCombat, "Modo Ranged (Armas)", function(en) manager:SetEnabled("RangedFarm", en) end)
+taskToggles.RangedFarm = Components.CreateToggle(frameCombat, "Modo Ranged (Armas)", function(en) manager:SetEnabled("RangedFarm", en) end)
 
 -- ────────────────────────────────────────────────────────────
 -- ABA: FRUTAS (Configuração de Coleta)
 -- ────────────────────────────────────────────────────────────
 Components.CreateSection(frameFruits, "🍎 Filtros de Coleta")
-Components.CreateToggle(frameFruits, "Rastreador Ativo", function(en) manager:SetEnabled("FruitTracker", en) end)
+taskToggles.ItemFarm = Components.CreateToggle(frameFruits, "Farm de Itens", function(en) manager:SetEnabled("ItemFarm", en) end)
 
 Components.CreateSeparator(frameFruits)
 Components.CreateSection(frameFruits, "Raridade Mínima")
@@ -239,10 +380,30 @@ end
 -- ABA: CONFIG (Sistema e Debug)
 -- ────────────────────────────────────────────────────────────
 Components.CreateSection(frameConfig, "🛠️ Sistema")
+taskToggles.AutoStats = Components.CreateToggle(frameConfig, "Auto-Stats (Hybrid)", function(en) manager:SetEnabled("AutoStats", en) end)
+
+Components.CreateSection(frameConfig, "🌍 Viagem")
+Components.CreateButton(frameConfig, "Ir para Town of Beginnings", function()
+    stopConflictingFarms("Teleport")
+    teleportManager:TeleportTo("Town of Beginnings")
+end)
+Components.CreateButton(frameConfig, "Ir para Sandora", function()
+    stopConflictingFarms("Teleport")
+    teleportManager:TeleportTo("Sandora")
+end)
+Components.CreateButton(frameConfig, "Ir para Desert Kingdom", function()
+    stopConflictingFarms("Teleport")
+    teleportManager:TeleportTo("Desert Kingdom")
+end)
+
 Components.CreateButton(frameConfig, "Parar Tudo (Panic)", function()
     manager:StopAll()
+    adaptiveBrain:Stop()
     combatController:Stop()
     smartFlight:Stop()
+    for _, toggle in pairs(taskToggles) do
+        toggle.SetEnabled(false)
+    end
     Logger.Warn("SISTEMA: Parada de Emergência!")
 end)
 
@@ -267,8 +428,14 @@ task.spawn(function()
         local state = manager:IsEnabled("FactoryFarm") and "Factory (Core)"
             or manager:IsEnabled("LawFarm") and "Law (Order) Raid"
             or manager:IsEnabled("BossFarm") and "Boss Farm"
+            or manager:IsEnabled("FarmRotation") and "Rotação de Bosses"
+            or manager:IsEnabled("QuestFarm") and "Quest Farm"
             or manager:IsEnabled("FruitTracker") and "Fruit Tracker"
+            or manager:IsEnabled("ItemFarm") and "Item Farm"
             or manager:IsEnabled("MerchantTracker") and "Rastreador"
+            or manager:IsEnabled("AntiAFK") and "Anti-AFK"
+            or manager:IsEnabled("AutoHeal") and "Auto-Heal"
+            or manager:IsEnabled("ESP") and "ESP"
             or "Idle"
         
         statusLabel.SetValue(state)

@@ -162,28 +162,28 @@ end
 function FarmRotation:_loop()
     while self.Enabled do
         local route = self:_buildRoute()
+        self._currentRoute = route
 
         if #route == 0 then
             Logger.Debug("Nenhum boss disponível na rota atual. Aguardando...")
             task.wait(10)
-            continue
-        end
+        else
+            -- Itera pela rota otimizada
+            for _, target in ipairs(route) do
+                if not self.Enabled then break end
 
-        -- Itera pela rota otimizada
-        for _, target in ipairs(route) do
-            if not self.Enabled then break end
-            
-            local bossData = target.Data
-            Logger.Info("Próximo alvo da rota: " .. bossData.Name)
-            
-            -- Executa o ciclo de farm
-            self:_farmBoss(target)
-            
-            -- Delay entre bosses para evitar spam de requests
-            task.wait(3)
-        end
+                local bossData = target.Data
+                Logger.Info("Próximo alvo da rota: " .. bossData.Name)
 
-        task.wait(5)
+                -- Executa o ciclo de farm
+                self:_farmBoss(target)
+
+                -- Delay entre bosses para evitar spam de requests
+                task.wait(3)
+            end
+
+            task.wait(5)
+        end
     end
 end
 
@@ -202,6 +202,7 @@ function FarmRotation:Stop()
         task.cancel(self._thread)
         self._thread = nil
     end
+    self._currentRoute = {}
     Logger.Info("FarmRotation: Sistema Desativado.")
 end
 

@@ -78,6 +78,7 @@ end
 
 -- Resolve o nome da ilha usando Alias ou Match Parcial
 function TeleportManager:_resolveIsland(name)
+	if type(name) ~= "string" or name == "" then return nil, nil end
 	name = name:lower():gsub("%s+", "") -- Limpa espaços
 
 	-- 1. Match por Alias
@@ -113,7 +114,8 @@ function TeleportManager:TeleportTo(islandName)
 	end
 
 	-- Validação de Integridade da Posição (Anti-NaN/Infinity)
-	if position.X ~= position.X or math.abs(position.X) > 1e5 then
+	if position.X ~= position.X or position.Y ~= position.Y or position.Z ~= position.Z
+		or math.abs(position.X) > 1e5 or math.abs(position.Y) > 1e5 or math.abs(position.Z) > 1e5 then
 		Logger.Error("TeleportManager: Posição inválida detectada!")
 		return false
 	end
@@ -131,7 +133,10 @@ function TeleportManager:TeleportTo(islandName)
 	-- O uso do SmartFlight é OBRIGATÓRIO para evitar detecção de teleporte
 	if self.SmartFlight then
 		-- O SmartFlight cuidará do Tweening e da trajetória orgânica
-		self.SmartFlight:FlyTo(position)
+		if not self.SmartFlight:FlyTo(position) then
+			Logger.Warn("TeleportManager: deslocamento interrompido para " .. fullName)
+			return false
+		end
 	else
 		Logger.Error("TeleportManager: SmartFlight não configurado! Viagem abortada.")
 		return false

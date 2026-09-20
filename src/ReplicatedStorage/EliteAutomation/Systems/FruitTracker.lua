@@ -74,8 +74,13 @@ function FruitTracker:_scan()
     -- Em vez de GetDescendants em tudo, tentamos focar em objetos relevantes
     -- Se o jogo for muito grande, o ideal é filtrar por pastas conhecidas
     for _, obj in ipairs(workspace:GetChildren()) do -- Scan inicial em nível superior
-        -- Se o objeto for muito complexo, podemos usar GetDescendants apenas em certos casos
-        local descendants = obj:IsA("Model") and obj:GetDescendants() or {obj}
+        -- Inclui o próprio Model e seus filhos; frutas podem ser o objeto raiz.
+        local descendants = {obj}
+        if obj:IsA("Model") then
+            for _, descendant in ipairs(obj:GetDescendants()) do
+                table.insert(descendants, descendant)
+            end
+        end
         
         for _, item in ipairs(descendants) do
             if item:IsA("Model") or item:IsA("BasePart") then
@@ -174,9 +179,9 @@ function FruitTracker:_onFruitDetected(entry)
 
     -- 3. Auto-Collection (Se habilitado)
     if self.AutoCollect then
-        task.spawn(function()
-            self:_collect(entry)
-        end)
+        -- Uma coleta por vez evita que vários voos disputem o SmartFlight.
+        local ok, err = pcall(function() self:_collect(entry) end)
+        if not ok then Logger.Error("FruitTracker Collect Error: " .. tostring(err)) end
     end
 end
 
@@ -218,6 +223,7 @@ function FruitTracker:Stop()
         task.cancel(self._thread)
         self._thread = nil
     end
+    self._knownFruits = {}
     Logger.Info("FruitTracker parado.")
 end
 

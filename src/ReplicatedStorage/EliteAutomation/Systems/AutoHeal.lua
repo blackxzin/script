@@ -174,6 +174,27 @@ function AutoHeal:Disable()
 	Logger.Info("AutoHeal desativado")
 end
 
+function AutoHeal:Start()
+	if self._thread then return end
+	self:Enable()
+	self._thread = task.spawn(function()
+		while self.Enabled do
+			local ok, err = pcall(function() self:Check() end)
+			if not ok then Logger.Error("AutoHeal: " .. tostring(err)) end
+			task.wait(0.5)
+		end
+		self._thread = nil
+	end)
+end
+
+function AutoHeal:Stop()
+	self:Disable()
+	if self._thread then
+		task.cancel(self._thread)
+		self._thread = nil
+	end
+end
+
 function AutoHeal:SetThreshold(threshold)
 	self.HealThreshold = math.clamp(threshold, 0.1, 0.9)
 	Logger.Info("Heal threshold alterado para:", self.HealThreshold * 100, "%")

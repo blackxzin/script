@@ -121,11 +121,10 @@ end
 
 -- ─── [4] EXPORTAÇÃO ──────────────────────────────────────────
 
--- Copia os dados para o namespace do módulo
+-- Expõe os dados junto com os métodos de busca do módulo.
+-- Retornar DATA aqui descartaria Get/MeetsMinRarity e quebraria o FruitTracker.
 for k, v in pairs(DATA) do
-    DATA[k] = v
+    FruitDatabase[k] = v
 end
 
-return DATA
-
-end)
+return FruitDatabase
